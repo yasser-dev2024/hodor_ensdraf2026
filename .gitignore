@@ -11,6 +11,8 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+tool/.activation_private_key
+tool/issued_activation_keys/
 
 # IntelliJ related
 *.iml

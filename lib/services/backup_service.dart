@@ -157,7 +157,7 @@ class BackupService {
         version: AppDatabase.schemaVersion,
         onConfigure: (db) async {
           await db.execute('PRAGMA foreign_keys = ON');
-          await db.execute('PRAGMA journal_mode = WAL');
+          await db.rawQuery('PRAGMA journal_mode = WAL');
         },
       );
       final photoRows = await _database.db.query(

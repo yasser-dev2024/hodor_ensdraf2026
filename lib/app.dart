@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'core/theme/app_theme.dart';
 import 'features/auth/auth_gate.dart';
+import 'features/launch/launch_gate.dart';
 import 'features/splash/splash_screen.dart';
 
 class AttendanceApp extends StatelessWidget {
@@ -19,7 +20,7 @@ class AttendanceApp extends StatelessWidget {
         textDirection: TextDirection.rtl,
         child: child ?? const SizedBox.shrink(),
       ),
-      home: const SplashScreen(child: AuthGate()),
+      home: const SplashScreen(child: LaunchGate(child: AuthGate())),
     );
   }
 }

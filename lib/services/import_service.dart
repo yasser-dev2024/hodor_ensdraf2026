@@ -1,9 +1,7 @@
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
 import 'package:excel2003/excel2003.dart';
-import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../data/app_database.dart';
@@ -59,20 +57,13 @@ class StudentImportService {
   Future<ImportWorkbook> readFile({
     required String fileName,
     required Uint8List bytes,
-    String? path,
   }) async {
     final extension = fileName.split('.').last.toLowerCase();
     try {
       if (extension == 'xlsx') return _readXlsx(fileName, bytes);
       if (extension == 'xls') return _readXls(fileName, bytes);
-      if (extension == 'pdf') {
-        if (path == null || path.isEmpty || !File(path).existsSync()) {
-          throw const FormatException('يتطلب استيراد PDF ملفًا محليًا صالحًا.');
-        }
-        return await _readPdf(fileName, path);
-      }
       throw const FormatException(
-        'نوع الملف غير مدعوم. استخدم XLSX أو XLS أو PDF نصي.',
+        'نوع الملف غير مدعوم. استخدم ملف Excel بصيغة XLSX أو XLS.',
       );
     } on FormatException {
       rethrow;
@@ -127,31 +118,6 @@ class StudentImportService {
       fileName: fileName,
       sourceType: 'xls',
       sheets: sheets,
-    );
-  }
-
-  Future<ImportWorkbook> _readPdf(String fileName, String path) async {
-    final text = await ReadPdfText.getPDFtext(path);
-    if (text.trim().length < 20) {
-      throw const FormatException(
-        'لم يتم العثور على نص داخل PDF. يبدو الملف ممسوحًا ضوئيًا؛ حوّله إلى Excel أو PDF نصي.',
-      );
-    }
-    final rows = text
-        .split(RegExp(r'\r?\n'))
-        .map((line) => line.trim())
-        .where((line) => line.isNotEmpty)
-        .map(
-          (line) => line
-              .split(RegExp(r'\t|\s{2,}'))
-              .map((cell) => cell.trim())
-              .toList(),
-        )
-        .toList();
-    return ImportWorkbook(
-      fileName: fileName,
-      sourceType: 'pdf',
-      sheets: [ImportSheetData(name: 'PDF', rows: rows)],
     );
   }
 

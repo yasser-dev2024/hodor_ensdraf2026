@@ -13,8 +13,16 @@ try {
     # Flutter's Windows AOT tools cannot write through a source path containing
     # non-ASCII characters, so compile an isolated copy in the system temp path.
     Get-ChildItem -LiteralPath $sourceRoot -Force |
-        Where-Object { $_.Name -notin @("build", ".dart_tool", ".git") } |
+        Where-Object { $_.Name -notin @("build", ".dart_tool", ".git", "releases", "tool") } |
         Copy-Item -Destination $temporaryRoot -Recurse -Force
+
+    # Copy build utilities but never copy the private activation signer or
+    # previously issued keys into a disposable build directory.
+    $temporaryTool = Join-Path $temporaryRoot "tool"
+    New-Item -ItemType Directory -Path $temporaryTool | Out-Null
+    Get-ChildItem -LiteralPath (Join-Path $sourceRoot "tool") -Force |
+        Where-Object { $_.Name -notin @(".activation_private_key", "issued_activation_keys") } |
+        Copy-Item -Destination $temporaryTool -Recurse -Force
 
     $temporaryTruststore = Join-Path $temporaryRoot "android\windows-cacerts"
     $env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"

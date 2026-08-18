@@ -1,10 +1,12 @@
 import '../data/app_database.dart';
 import 'package:sqflite/sqflite.dart';
+import 'key_value_store.dart';
 
-class SettingsRepository {
+class SettingsRepository implements KeyValueStore {
   SettingsRepository(this._database);
   final AppDatabase _database;
 
+  @override
   Future<String?> get(String key) async {
     final rows = await _database.db.query(
       'settings',
@@ -23,6 +25,7 @@ class SettingsRepository {
     };
   }
 
+  @override
   Future<void> set(String key, String value) async {
     await _database.db.rawInsert(
       '''

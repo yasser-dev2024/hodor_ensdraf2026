@@ -15,7 +15,9 @@ class AppDatabase {
       version: schemaVersion,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
-        await db.execute('PRAGMA journal_mode = WAL');
+        // journal_mode returns a result row, so Android's SQLite driver
+        // requires rawQuery instead of execute (notably on Android 16).
+        await db.rawQuery('PRAGMA journal_mode = WAL');
       },
       onCreate: (db, version) async => _createSchema(db),
     );

@@ -9,10 +9,13 @@ import '../repositories/class_repository.dart';
 import '../repositories/student_repository.dart';
 import '../repositories/settings_repository.dart';
 import '../services/backup_service.dart';
+import '../services/activation_service.dart';
 import '../services/data_protection_service.dart';
 import '../services/image_storage_service.dart';
 import '../services/import_service.dart';
 import '../services/report_service.dart';
+import '../services/startup_permission_service.dart';
+import '../services/usage_policy_service.dart';
 
 final databaseProvider = Provider<AppDatabase>(
   (ref) => throw UnimplementedError(),
@@ -41,6 +44,15 @@ final authRepositoryProvider = Provider<AuthRepository>(
 );
 final settingsRepositoryProvider = Provider<SettingsRepository>(
   (ref) => SettingsRepository(ref.watch(databaseProvider)),
+);
+final activationServiceProvider = Provider<ActivationService>(
+  (ref) => ActivationService(ref.watch(settingsRepositoryProvider)),
+);
+final usagePolicyServiceProvider = Provider<UsagePolicyService>(
+  (ref) => UsagePolicyService(ref.watch(settingsRepositoryProvider)),
+);
+final startupPermissionServiceProvider = Provider<StartupPermissionService>(
+  (ref) => StartupPermissionService(),
 );
 final imageStorageProvider = Provider<ImageStorageService>(
   (ref) => ImageStorageService(),

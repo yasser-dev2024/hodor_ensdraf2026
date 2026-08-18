@@ -50,7 +50,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'يدعم XLSX وXLS القديم وPDF النصي. يكتشف صف العناوين حتى مع وجود شعار أو أسطر قبله.',
+                    'يدعم XLSX وXLS القديم. يكتشف صف العناوين حتى مع وجود شعار أو أسطر قبله.',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.55, color: Colors.blueGrey),
                   ),
@@ -286,7 +286,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
     try {
       final result = await fp.FilePicker.pickFiles(
         type: fp.FileType.custom,
-        allowedExtensions: const ['xlsx', 'xls', 'pdf'],
+        allowedExtensions: const ['xlsx', 'xls'],
         withData: true,
       );
       if (result == null) return;
@@ -300,7 +300,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
       }
       final workbook = await ref
           .read(importServiceProvider)
-          .readFile(fileName: picked.name, bytes: bytes, path: picked.path);
+          .readFile(fileName: picked.name, bytes: bytes);
       _workbook = workbook;
       _preview = await ref.read(importServiceProvider).preview(workbook);
     } catch (error) {
