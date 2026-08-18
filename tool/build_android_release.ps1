@@ -43,6 +43,13 @@ finally {
     if ($resolvedTemp.StartsWith($systemTemp, [StringComparison]::OrdinalIgnoreCase) -and
         (Split-Path -Leaf $resolvedTemp).StartsWith("attendance-release-build-") -and
         (Test-Path -LiteralPath $resolvedTemp)) {
-        Remove-Item -LiteralPath $resolvedTemp -Recurse -Force
+        try {
+            Remove-Item -LiteralPath $resolvedTemp -Recurse -Force
+        }
+        catch {
+            # Gradle or lint can briefly retain a file handle after the build.
+            # Cleanup must never hide the actual build result.
+            Write-Warning "Temporary build directory could not be removed yet: $resolvedTemp"
+        }
     }
 }
