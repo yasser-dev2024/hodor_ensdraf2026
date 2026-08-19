@@ -22,6 +22,8 @@
 - تشغيل Cold Start وشاشة الإعداد: ناجحان دون شاشة فارغة.
 - سجل الجهاز: لا FATAL EXCEPTION ولا E/flutter ولا LocaleDataException ولا SQLiteException.
 - `index.html`: الرابط والحجم وSHA-256 مطابقون للحزمة النهائية.
+- التحقق المنشور: صفحة GitHub Pages ورابط زر Android أعادا `200 OK`، واكتمل تنزيل 96,704,698 بايت من الرابط نفسه ببصمة `8EF72A2D7339A62765D6A6DCE02DF545196AC8930E8088C5B674EF925576AB52`.
+- GitHub: رُفع commit `f70a35e` إلى فرع `main` بنجاح.
 
 ## اعتمادات خارجية لا يمكن تنفيذها من Windows وحده
 
