@@ -14,6 +14,7 @@ import '../models/import_models.dart';
 import '../repositories/class_repository.dart';
 import '../repositories/student_repository.dart';
 import 'data_protection_service.dart';
+import 'official_student_pdf_parser.dart';
 
 class StudentImportService {
   StudentImportService({
@@ -102,8 +103,13 @@ class StudentImportService {
         await temporaryFile.writeAsBytes(bytes, flush: true);
         path = temporaryFile.path;
       }
-      final text = await ReadPdfText.getPDFtext(path);
-      return workbookFromPdfText(fileName, text);
+      List<String> pages;
+      try {
+        pages = await ReadPdfText.getPDFtextPaginated(path);
+      } catch (_) {
+        pages = [await ReadPdfText.getPDFtext(path)];
+      }
+      return workbookFromPdfPages(fileName, pages);
     } catch (error) {
       if (error is FormatException) rethrow;
       throw const FormatException(
@@ -117,7 +123,21 @@ class StudentImportService {
   }
 
   ImportWorkbook workbookFromPdfText(String fileName, String text) {
-    final cleaned = text.replaceAll('\u0000', '').trim();
+    return workbookFromPdfPages(fileName, text.split('\f'));
+  }
+
+  ImportWorkbook workbookFromPdfPages(String fileName, List<String> pages) {
+    final officialRows = OfficialStudentPdfParser.parsePages(pages);
+    if (officialRows != null) {
+      return ImportWorkbook(
+        fileName: fileName,
+        sourceType: 'pdf',
+        sheets: [ImportSheetData(name: 'بيانات الطلاب', rows: officialRows)],
+      );
+    }
+    final cleaned = OfficialStudentPdfParser.normalizeExtractedText(
+      pages.join('\n'),
+    ).trim();
     if (cleaned.length < 20 ||
         !RegExp(r'[A-Za-zء-ي]').hasMatch(cleaned) ||
         !RegExp(r'\d').hasMatch(cleaned)) {
