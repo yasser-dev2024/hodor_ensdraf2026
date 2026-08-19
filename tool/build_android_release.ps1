@@ -81,7 +81,11 @@ try {
         $releaseDate = (Get-Date).ToString('yyyy-MM-dd')
         $page = [Regex]::Replace($page, '(<dd id="release-date">)[^<]*(</dd>)', { param($match) $match.Groups[1].Value + $releaseDate + $match.Groups[2].Value })
         $page = [Regex]::Replace($page, '(<dd id="app-version">)[^<]*(</dd>)', { param($match) $match.Groups[1].Value + "$versionName ($versionCode)" + $match.Groups[2].Value })
-        $page = [Regex]::Replace($page, 'href="releases/morning-attendance-v[^"]+\.apk"', "href=`"releases/morning-attendance-v$versionName.apk`"")
+        $page = [Regex]::Replace(
+            $page,
+            'href="releases/morning-attendance-v[^"?]+\.apk(?:\?v=[^"]+)?"',
+            "href=`"releases/morning-attendance-v$versionName.apk?v=$apkHash`""
+        )
         [IO.File]::WriteAllText($downloadPage, $page, [Text.UTF8Encoding]::new($false))
     }
     Write-Output "Release APK copied to $releaseTarget"
