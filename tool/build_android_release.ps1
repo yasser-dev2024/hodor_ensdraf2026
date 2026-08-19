@@ -1,7 +1,9 @@
 $ErrorActionPreference = "Stop"
 $sourceRoot = Split-Path -Parent $PSScriptRoot
 $sourceTruststore = Join-Path $sourceRoot "android\windows-cacerts"
-$temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("attendance-release-build-" + [Guid]::NewGuid().ToString("N"))
+$sourceKeyProperties = Join-Path $sourceRoot "android\key.properties"
+$sourceKeystore = Join-Path $sourceRoot "android\release-key.jks"
+$temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) "morning-attendance-release-workspace"
 $pubspec = Get-Content -LiteralPath (Join-Path $sourceRoot "pubspec.yaml") -Raw -Encoding UTF8
 $versionMatch = [Regex]::Match($pubspec, '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)\s*$')
 if (-not $versionMatch.Success) { throw "Could not read the app version from pubspec.yaml." }
@@ -12,24 +14,38 @@ $releaseTarget = Join-Path $sourceRoot "releases\morning-attendance-v$versionNam
 if (-not (Test-Path -LiteralPath $sourceTruststore)) {
     throw "Run tool/create_gradle_truststore.ps1 before building on this machine."
 }
+if (-not (Test-Path -LiteralPath $sourceKeyProperties) -or
+    -not (Test-Path -LiteralPath $sourceKeystore)) {
+    throw "Release signing files are required on this machine."
+}
 
-New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
+$resolvedTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$resolvedTemporaryRoot = [IO.Path]::GetFullPath($temporaryRoot)
+if (-not $resolvedTemporaryRoot.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase) -or
+    [IO.Path]::GetFileName($resolvedTemporaryRoot) -ne "morning-attendance-release-workspace") {
+    throw "Unexpected release workspace path."
+}
+New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
+
+# Mirror source into a stable ASCII path. Build caches stay in this workspace,
+# while private signing material and issued activation keys are excluded.
+& robocopy.exe $sourceRoot $temporaryRoot /MIR /R:2 /W:1 `
+    /XD .git build .dart_tool .gradle releases issued_activation_keys `
+    /XF .activation_private_key key.properties release-key.jks windows-cacerts `
+    /NFL /NDL /NJH /NJS /NP | Out-Null
+$copyExitCode = $LASTEXITCODE
+if ($copyExitCode -gt 7) {
+    throw "Could not synchronize the ASCII release workspace (robocopy exit $copyExitCode)."
+}
+
+$temporaryKeyProperties = Join-Path $temporaryRoot "android\key.properties"
+$temporaryKeystore = Join-Path $temporaryRoot "android\release-key.jks"
+$temporaryTruststore = Join-Path $temporaryRoot "android\windows-cacerts"
 try {
-    # Flutter's Windows AOT tools cannot write through a source path containing
-    # non-ASCII characters, so compile an isolated copy in the system temp path.
-    Get-ChildItem -LiteralPath $sourceRoot -Force |
-        Where-Object { $_.Name -notin @("build", ".dart_tool", ".git", "releases", "tool") } |
-        Copy-Item -Destination $temporaryRoot -Recurse -Force
+    Copy-Item -LiteralPath $sourceKeyProperties -Destination $temporaryKeyProperties -Force
+    Copy-Item -LiteralPath $sourceKeystore -Destination $temporaryKeystore -Force
+    Copy-Item -LiteralPath $sourceTruststore -Destination $temporaryTruststore -Force
 
-    # Copy build utilities but never copy the private activation signer or
-    # previously issued keys into a disposable build directory.
-    $temporaryTool = Join-Path $temporaryRoot "tool"
-    New-Item -ItemType Directory -Path $temporaryTool | Out-Null
-    Get-ChildItem -LiteralPath (Join-Path $sourceRoot "tool") -Force |
-        Where-Object { $_.Name -notin @(".activation_private_key", "issued_activation_keys") } |
-        Copy-Item -Destination $temporaryTool -Recurse -Force
-
-    $temporaryTruststore = Join-Path $temporaryRoot "android\windows-cacerts"
     $env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"
     $env:PATH = (Join-Path $env:JAVA_HOME "bin") + ";" + $env:PATH
     # Release builds on this machine are intentionally offline. Pub may only
@@ -71,18 +87,9 @@ try {
     Write-Output "Release APK copied to $releaseTarget"
 }
 finally {
-    $resolvedTemp = [IO.Path]::GetFullPath($temporaryRoot)
-    $systemTemp = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-    if ($resolvedTemp.StartsWith($systemTemp, [StringComparison]::OrdinalIgnoreCase) -and
-        (Split-Path -Leaf $resolvedTemp).StartsWith("attendance-release-build-") -and
-        (Test-Path -LiteralPath $resolvedTemp)) {
-        try {
-            Remove-Item -LiteralPath $resolvedTemp -Recurse -Force
-        }
-        catch {
-            # Gradle or lint can briefly retain a file handle after the build.
-            # Cleanup must never hide the actual build result.
-            Write-Warning "Temporary build directory could not be removed yet: $resolvedTemp"
-        }
-    }
+    # The workspace cache is intentionally retained, but private signing files
+    # never remain in it between builds.
+    [IO.File]::Delete($temporaryKeyProperties)
+    [IO.File]::Delete($temporaryKeystore)
+    [IO.File]::Delete($temporaryTruststore)
 }

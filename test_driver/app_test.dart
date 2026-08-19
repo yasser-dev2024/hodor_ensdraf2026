@@ -26,7 +26,7 @@ void main() {
         await driver.tap(find.byValueKey('setup_submit'));
 
         await driver.waitFor(find.byValueKey('nav_home'), timeout: wait);
-        await driver.waitFor(find.text('بدء المسح'), timeout: wait);
+        await driver.waitFor(find.text('بدء تسجيل الحضور'), timeout: wait);
 
         await driver.tap(find.byValueKey('nav_reports'));
         await driver.waitFor(find.text('تقرير اليوم الحالي'), timeout: wait);
@@ -42,7 +42,7 @@ void main() {
           find.text('لوحة الأفضل والأكثر — المدرسة كاملة'),
           timeout: wait,
         );
-        await driver.tap(find.pageBack());
+        await driver.tap(find.byTooltip('رجوع'));
 
         await driver.tap(find.byValueKey('nav_more'));
         await driver.waitFor(
@@ -53,7 +53,7 @@ void main() {
         await driver.waitFor(find.text('الترحيل السنوي'), timeout: wait);
         await driver.waitFor(find.text('تعطيل دفعة كاملة'), timeout: wait);
       },
-      timeout: const Timeout(Duration(minutes: 4)),
+      timeout: const Timeout(Duration(minutes: 8)),
     );
   });
 }

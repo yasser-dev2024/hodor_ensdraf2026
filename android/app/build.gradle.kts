@@ -51,19 +51,34 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // Keep every development/acceptance install isolated from the
+            // signed production package and its on-device database.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
+        }
         release {
-            if (!keystorePropertiesFile.exists()) {
-                throw GradleException(
-                    "Release signing is required. Create android/key.properties and the protected keystore."
-                )
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
             }
-            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+    }
+}
+
+if (!keystorePropertiesFile.exists()) {
+    tasks.configureEach {
+        if (name == "preReleaseBuild") {
+            doFirst {
+                throw GradleException(
+                    "Release signing is required. Create android/key.properties and the protected keystore."
+                )
+            }
         }
     }
 }
