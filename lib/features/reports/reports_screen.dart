@@ -5,7 +5,9 @@ import 'package:intl/intl.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
+import 'advanced_reports_screen.dart';
 import 'daily_report_screen.dart';
+import 'report_archive_screen.dart';
 
 class ReportsScreen extends ConsumerWidget {
   const ReportsScreen({super.key});
@@ -31,9 +33,57 @@ class ReportsScreen extends ConsumerWidget {
             style: TextStyle(color: Colors.blueGrey.shade600),
           ),
           const SizedBox(height: 20),
+          _ReportNavigationCard(
+            color: AppColors.blue,
+            icon: Icons.today_rounded,
+            title: 'تقرير اليوم الحالي',
+            subtitle: 'الحضور والغياب والاستئذان والتفاصيل والتصدير',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => DailyReportScreen(date: DateTime.now()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 9),
+          _ReportNavigationCard(
+            color: const Color(0xFF6C4AB6),
+            icon: Icons.analytics_rounded,
+            title: 'التقارير الأسبوعية والشهرية والفصلية',
+            subtitle: 'فترات ونطاقات وإحصاءات أفضل طالب وأفضل فصل',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const AdvancedReportsScreen()),
+            ),
+          ),
+          const SizedBox(height: 9),
+          _ReportNavigationCard(
+            color: AppColors.teal,
+            icon: Icons.manage_search_rounded,
+            title: 'تقرير يوم سابق',
+            subtitle: 'اختر التاريخ وافتح السجل اليومي المحفوظ',
+            onPressed: () => _openDate(context),
+          ),
+          const SizedBox(height: 9),
+          _ReportNavigationCard(
+            color: AppColors.excused,
+            icon: Icons.archive_rounded,
+            title: 'أرشيف ملفات التقارير',
+            subtitle: 'ملفات PDF اليومية والأسبوعية والشهرية الدائمة',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ReportArchiveScreen()),
+            ),
+          ),
+          const SizedBox(height: 14),
           FutureBuilder<DailySummary>(
             future: repository.summary(),
             builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text('تعذر تحميل ملخص اليوم.'),
+                  ),
+                );
+              }
               final summary =
                   snapshot.data ??
                   const DailySummary(
@@ -113,30 +163,6 @@ class ReportsScreen extends ConsumerWidget {
               );
             },
           ),
-          const SizedBox(height: 14),
-          OutlinedButton.icon(
-            onPressed: () async {
-              final date = await showDatePicker(
-                context: context,
-                firstDate: DateTime(2020),
-                lastDate: DateTime.now().add(const Duration(days: 1)),
-                initialDate: DateTime.now(),
-                locale: const Locale('ar', 'SA'),
-              );
-              if (date != null && context.mounted) {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => DailyReportScreen(date: date),
-                  ),
-                );
-              }
-            },
-            icon: const Icon(Icons.calendar_month_outlined),
-            label: const Text('اختيار تاريخ'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size.fromHeight(56),
-            ),
-          ),
           const SizedBox(height: 22),
           const Text(
             'أرشيف التقارير',
@@ -150,6 +176,14 @@ class ReportsScreen extends ConsumerWidget {
           FutureBuilder<List<String>>(
             future: repository.availableDates(),
             builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return const Card(
+                  child: Padding(
+                    padding: EdgeInsets.all(18),
+                    child: Text('تعذر تحميل أرشيف الأيام.'),
+                  ),
+                );
+              }
               final dates = snapshot.data ?? const <String>[];
               if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
@@ -205,6 +239,92 @@ class ReportsScreen extends ConsumerWidget {
       ),
     );
   }
+
+  static Future<void> _openDate(BuildContext context) async {
+    final date = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+      initialDate: DateTime.now(),
+      locale: const Locale('ar', 'SA'),
+    );
+    if (date != null && context.mounted) {
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => DailyReportScreen(date: date)));
+    }
+  }
+}
+
+class _ReportNavigationCard extends StatelessWidget {
+  const _ReportNavigationCard({
+    required this.color,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onPressed,
+  });
+
+  final Color color;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: color.withValues(alpha: .08),
+    borderRadius: BorderRadius.circular(18),
+    child: InkWell(
+      onTap: onPressed,
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: color.withValues(alpha: .28)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 54,
+              height: 54,
+              decoration: BoxDecoration(
+                color: color,
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(icon, color: Colors.white, size: 28),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.navy,
+                      fontSize: 15,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.blueGrey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_left_rounded, color: color),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _ReportStat extends StatelessWidget {

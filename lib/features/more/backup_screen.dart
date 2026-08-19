@@ -59,6 +59,41 @@ class _BackupScreenState extends ConsumerState<BackupScreen> {
             ),
           ),
           const SizedBox(height: 16),
+          FutureBuilder<Map<String, String>>(
+            future: ref.read(settingsRepositoryProvider).getAll(),
+            builder: (context, snapshot) {
+              final values = snapshot.data ?? const <String, String>{};
+              final last = DateTime.tryParse(values['last_backup_at'] ?? '');
+              final interval =
+                  int.tryParse(values['backup_reminder_days'] ?? '') ?? 7;
+              final overdue =
+                  last == null ||
+                  DateTime.now().difference(last.toLocal()).inDays >= interval;
+              return Card(
+                color: overdue ? const Color(0xFFFFF5E4) : null,
+                child: ListTile(
+                  leading: Icon(
+                    overdue
+                        ? Icons.notification_important_outlined
+                        : Icons.verified_outlined,
+                    color: overdue ? AppColors.excused : AppColors.present,
+                  ),
+                  title: Text(
+                    overdue
+                        ? 'حان موعد إنشاء نسخة احتياطية'
+                        : 'النسخ الاحتياطي محدث',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(
+                    last == null
+                        ? 'لم تُنشأ نسخة من هذا الجهاز بعد.'
+                        : 'آخر نسخة: ${last.toLocal()} — التذكير كل $interval أيام',
+                  ),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 13),
           _BackupAction(
             icon: Icons.backup_rounded,
             title: 'إنشاء نسخة احتياطية',
@@ -151,6 +186,10 @@ class _BackupScreenState extends ConsumerState<BackupScreen> {
       final file = await ref
           .read(backupServiceProvider)
           .createBackup(password: password);
+      await ref
+          .read(settingsRepositoryProvider)
+          .set('last_backup_at', DateTime.now().toUtc().toIso8601String());
+      refreshData(ref);
       await SharePlus.instance.share(
         ShareParams(subject: 'نسخة احتياطية للحضور', files: [XFile(file.path)]),
       );

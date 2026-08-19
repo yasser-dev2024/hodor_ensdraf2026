@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:printing/printing.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
@@ -7,6 +8,7 @@ import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
 import '../../models/student.dart';
+import '../../models/student_transfer.dart';
 import 'student_form_screen.dart';
 import 'student_photo.dart';
 
@@ -90,7 +92,8 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                         children: [
                           _InfoChip(
                             icon: Icons.badge_outlined,
-                            text: 'السجل: ${student.maskedNationalId}',
+                            text:
+                                'السجل: ${user.role.canViewSensitiveStudentData ? student.nationalId : student.maskedNationalId}',
                           ),
                           if (student.academicNumber?.isNotEmpty == true)
                             _InfoChip(
@@ -168,6 +171,10 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                 },
               ),
               const SizedBox(height: 14),
+              _AttendanceHistoryCard(studentId: student.id),
+              const SizedBox(height: 14),
+              _TransferHistoryCard(studentId: student.id),
+              const SizedBox(height: 14),
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(18),
@@ -222,13 +229,16 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                 children: [
                   if (user.role.canManage)
                     FilledButton.tonalIcon(
-                      onPressed: () => _edit(student),
+                      onPressed: student.status == 'active'
+                          ? () => _edit(student)
+                          : null,
                       icon: const Icon(Icons.edit_outlined),
                       label: const Text('تعديل'),
                     ),
                   if (user.role.canManage)
                     FilledButton.tonalIcon(
-                      onPressed: student.gradeId == null
+                      onPressed:
+                          student.status != 'active' || student.gradeId == null
                           ? null
                           : () => _move(student),
                       icon: const Icon(Icons.swap_horiz_rounded),
@@ -239,7 +249,7 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                     icon: const Icon(Icons.print_outlined),
                     label: const Text('طباعة الباركود'),
                   ),
-                  if (user.role.canManage)
+                  if (user.role.canManage && student.status == 'active')
                     OutlinedButton.icon(
                       onPressed: () => _deactivate(student),
                       icon: const Icon(
@@ -250,6 +260,12 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                         'تعطيل الطالب',
                         style: TextStyle(color: AppColors.absent),
                       ),
+                    ),
+                  if (user.role.canManage && student.status != 'active')
+                    FilledButton.icon(
+                      onPressed: () => _reactivate(student),
+                      icon: const Icon(Icons.person_add_alt_1_rounded),
+                      label: const Text('إعادة تفعيل الطالب'),
                     ),
                 ],
               ),
@@ -315,9 +331,16 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
   Future<void> _print(Student student) async {
     final schoolName =
         await ref.read(settingsRepositoryProvider).get('school_name') ?? '';
-    final file = await ref.read(reportServiceProvider).generateBarcodeCards([
-      student,
-    ], schoolName: schoolName);
+    final cardSize =
+        await ref.read(settingsRepositoryProvider).get('barcode_card_size') ??
+        'standard';
+    final file = await ref
+        .read(reportServiceProvider)
+        .generateBarcodeCards(
+          [student],
+          schoolName: schoolName,
+          cardSize: cardSize,
+        );
     await Printing.layoutPdf(
       name: 'بطاقة ${student.name}',
       onLayout: (_) => file.readAsBytes(),
@@ -351,6 +374,34 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
     refreshData(ref);
     if (mounted) Navigator.of(context).pop();
   }
+
+  Future<void> _reactivate(Student student) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('إعادة تفعيل الطالب'),
+        content: Text(
+          'سيعود ${student.name} إلى قوائم الطلاب النشطين والمسح مع بقاء تاريخه السابق كاملًا.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('إعادة التفعيل'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref
+        .read(studentRepositoryProvider)
+        .reactivate(student.id, userId: ref.read(currentUserProvider)!.id);
+    refreshData(ref);
+    if (mounted) setState(_reload);
+  }
 }
 
 class _InfoChip extends StatelessWidget {
@@ -370,6 +421,162 @@ class _InfoChip extends StatelessWidget {
         Icon(icon, size: 16, color: AppColors.blue),
         const SizedBox(width: 5),
         Text(text, style: const TextStyle(fontSize: 12)),
+      ],
+    ),
+  );
+}
+
+class _AttendanceHistoryCard extends ConsumerWidget {
+  const _AttendanceHistoryCard({required this.studentId});
+  final String studentId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Card(
+    child: ExpansionTile(
+      leading: const Icon(Icons.history_rounded, color: AppColors.blue),
+      title: const Text(
+        'عرض سجل الحضور اليومي',
+        style: TextStyle(fontWeight: FontWeight.w900, color: AppColors.navy),
+      ),
+      children: [
+        FutureBuilder<List<AttendanceRecord>>(
+          future: ref
+              .read(attendanceRepositoryProvider)
+              .getStudentHistory(studentId),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(),
+              );
+            }
+            if (snapshot.hasError) {
+              return const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('تعذر تحميل سجل الحضور.'),
+              );
+            }
+            final records = snapshot.data ?? const <AttendanceRecord>[];
+            if (records.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+                child: Text('لا توجد سجلات حضور لهذا الطالب حتى الآن.'),
+              );
+            }
+            return Column(
+              children: [
+                for (final record in records)
+                  ListTile(
+                    leading: CircleAvatar(
+                      backgroundColor: _attendanceColor(
+                        record.status,
+                      ).withValues(alpha: .12),
+                      child: Icon(
+                        _attendanceIcon(record.status),
+                        color: _attendanceColor(record.status),
+                      ),
+                    ),
+                    title: Text(
+                      '${record.status.label} — ${record.attendanceDate}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      [
+                        'الوقت ${DateFormat('hh:mm a', 'ar').format(record.recordedAt.toLocal())}',
+                        if (record.classLabel.isNotEmpty) record.classLabel,
+                        if (record.reason?.isNotEmpty == true)
+                          'السبب: ${record.reason}',
+                        if (record.receiverName?.isNotEmpty == true)
+                          'المستلم: ${record.receiverName}',
+                        if (record.departureAt != null)
+                          'وقت الانصراف: ${DateFormat('hh:mm a', 'ar').format(record.departureAt!.toLocal())}',
+                        if (record.note?.isNotEmpty == true)
+                          'ملاحظة: ${record.note}',
+                      ].join('\n'),
+                    ),
+                    isThreeLine:
+                        record.reason?.isNotEmpty == true ||
+                        record.receiverName?.isNotEmpty == true ||
+                        record.note?.isNotEmpty == true,
+                  ),
+              ],
+            );
+          },
+        ),
+      ],
+    ),
+  );
+
+  static Color _attendanceColor(AttendanceStatus status) => switch (status) {
+    AttendanceStatus.present => AppColors.present,
+    AttendanceStatus.absent => AppColors.absent,
+    AttendanceStatus.excused => AppColors.excused,
+  };
+
+  static IconData _attendanceIcon(AttendanceStatus status) => switch (status) {
+    AttendanceStatus.present => Icons.check_rounded,
+    AttendanceStatus.absent => Icons.close_rounded,
+    AttendanceStatus.excused => Icons.exit_to_app_rounded,
+  };
+}
+
+class _TransferHistoryCard extends ConsumerWidget {
+  const _TransferHistoryCard({required this.studentId});
+  final String studentId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Card(
+    child: ExpansionTile(
+      leading: const Icon(Icons.swap_horiz_rounded, color: AppColors.blue),
+      title: const Text(
+        'سجل نقل الطالب',
+        style: TextStyle(fontWeight: FontWeight.w900, color: AppColors.navy),
+      ),
+      children: [
+        FutureBuilder<List<StudentTransfer>>(
+          future: ref
+              .read(studentRepositoryProvider)
+              .transferHistory(studentId),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Padding(
+                padding: EdgeInsets.all(20),
+                child: CircularProgressIndicator(),
+              );
+            }
+            if (snapshot.hasError) {
+              return const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('تعذر تحميل سجل النقل.'),
+              );
+            }
+            final transfers = snapshot.data ?? const <StudentTransfer>[];
+            if (transfers.isEmpty) {
+              return const Padding(
+                padding: EdgeInsets.fromLTRB(16, 4, 16, 20),
+                child: Text('لم تُسجل عمليات نقل لهذا الطالب.'),
+              );
+            }
+            return Column(
+              children: [
+                for (final transfer in transfers)
+                  ListTile(
+                    leading: const CircleAvatar(
+                      child: Icon(Icons.arrow_back_rounded),
+                    ),
+                    title: Text(
+                      '${transfer.oldClassLabel} ← ${transfer.newClassLabel}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                    subtitle: Text(
+                      '${DateFormat('dd/MM/yyyy — hh:mm a', 'ar').format(transfer.transferredAt.toLocal())}\nبواسطة: ${transfer.transferredBy}',
+                    ),
+                    isThreeLine: true,
+                  ),
+              ],
+            );
+          },
+        ),
       ],
     ),
   );

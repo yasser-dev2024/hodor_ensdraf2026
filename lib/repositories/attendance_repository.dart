@@ -33,6 +33,7 @@ class AttendanceRepository {
     DateTime? departureAt,
     DateTime? at,
   }) async {
+    await _requireAttendanceWriter(userId);
     final now = (at ?? DateTime.now()).toUtc();
     final date = dayKey(at);
     if (await isDayClosed(date)) throw const ClosedAttendanceDayException();
@@ -93,6 +94,7 @@ class AttendanceRepository {
     required AttendanceStatus status,
     required String userId,
   }) async {
+    await _requireAttendanceWriter(userId);
     final rows = await _database.db.query(
       'attendance',
       where: 'id = ?',
@@ -119,6 +121,59 @@ class AttendanceRepository {
         'occurred_at': now,
         'old_value': jsonEncode({'status': old}),
         'new_value': jsonEncode({'status': status.name}),
+      });
+    });
+  }
+
+  Future<void> recordDeparture({
+    required String recordId,
+    required String userId,
+    String? reason,
+    String? note,
+    String? receiverName,
+    DateTime? at,
+  }) async {
+    await _requireAttendanceWriter(userId);
+    final rows = await _database.db.query(
+      'attendance',
+      where: 'id = ?',
+      whereArgs: [recordId],
+      limit: 1,
+    );
+    if (rows.isEmpty) throw StateError('سجل الحضور غير موجود.');
+    final old = rows.first;
+    final date = old['attendance_date'] as String;
+    if (await isDayClosed(date)) throw const ClosedAttendanceDayException();
+    final departure = (at ?? DateTime.now()).toUtc().toIso8601String();
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _database.db.transaction((txn) async {
+      await txn.update(
+        'attendance',
+        {
+          'status': AttendanceStatus.excused.name,
+          'reason': _emptyToNull(reason) ?? old['reason'],
+          'note': _emptyToNull(note) ?? old['note'],
+          'receiver_name': _emptyToNull(receiverName) ?? old['receiver_name'],
+          'departure_at': departure,
+          'updated_at': now,
+        },
+        where: 'id = ?',
+        whereArgs: [recordId],
+      );
+      await txn.insert('audit_logs', {
+        'action': 'attendance_departure',
+        'entity_type': 'attendance',
+        'entity_id': recordId,
+        'user_id': userId,
+        'occurred_at': now,
+        'old_value': jsonEncode({
+          'status': old['status'],
+          'departure_at': old['departure_at'],
+        }),
+        'new_value': jsonEncode({
+          'status': AttendanceStatus.excused.name,
+          'departure_at': departure,
+        }),
       });
     });
   }
@@ -167,6 +222,38 @@ class AttendanceRepository {
     return rows.map(_fromRow).toList();
   }
 
+  Future<List<AttendanceRecord>> getStudentHistory(
+    String studentId, {
+    String? startDate,
+    String? endDate,
+    int? limit,
+  }) async {
+    final conditions = <String>['a.student_id = ?'];
+    final args = <Object?>[studentId];
+    if (startDate != null) {
+      conditions.add('a.attendance_date >= ?');
+      args.add(startDate);
+    }
+    if (endDate != null) {
+      conditions.add('a.attendance_date <= ?');
+      args.add(endDate);
+    }
+    final safeLimit = limit == null ? '' : 'LIMIT ${limit.clamp(1, 10000)}';
+    final rows = await _database.db.rawQuery('''
+      SELECT a.*, s.name AS student_name, u.name AS user_name,
+             g.name AS grade_name, c.name AS class_name
+      FROM attendance a
+      JOIN students s ON s.id = a.student_id
+      JOIN users u ON u.id = a.recorded_by
+      LEFT JOIN classes c ON c.id = a.class_id_snapshot
+      LEFT JOIN grades g ON g.id = c.grade_id
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY a.attendance_date DESC, a.recorded_at DESC
+      $safeLimit
+    ''', args);
+    return rows.map(_fromRow).toList();
+  }
+
   Future<DailySummary> summary({String? date, String? classId}) async {
     final targetDate = date ?? dayKey();
     final totalResult = await _database.db.rawQuery(
@@ -201,21 +288,23 @@ class AttendanceRepository {
     String? date,
     String? classId,
   }) async {
+    final targetDate = date ?? dayKey();
     return _database.db.rawQuery(
       '''
-      SELECT s.id, s.name, g.name AS grade_name, c.name AS class_name
+      SELECT s.id, s.name, s.class_id, g.name AS grade_name, c.name AS class_name
       FROM students s
       LEFT JOIN classes c ON c.id = s.class_id
       LEFT JOIN grades g ON g.id = s.grade_id
       WHERE s.status = 'active'
         ${classId == null ? '' : 'AND s.class_id = ?'}
+        AND date(s.created_at) <= date(?)
         AND NOT EXISTS (
           SELECT 1 FROM attendance a
           WHERE a.student_id = s.id AND a.attendance_date = ?
         )
       ORDER BY g.sort_order, c.sort_order, s.name
     ''',
-      [if (classId != null) classId, date ?? dayKey()],
+      [if (classId != null) classId, targetDate, targetDate],
     );
   }
 
@@ -255,8 +344,74 @@ class AttendanceRepository {
     return rows.isNotEmpty && rows.first['reopened_at'] == null;
   }
 
-  Future<void> closeDay({required String userId, String? date}) async {
+  Future<void> reopenDay({required String userId, required String date}) async {
+    await _requireManager(userId);
+    final rows = await _database.db.query(
+      'closed_days',
+      where: 'attendance_date = ?',
+      whereArgs: [date],
+      limit: 1,
+    );
+    if (rows.isEmpty || rows.first['reopened_at'] != null) {
+      throw StateError('هذا اليوم غير مغلق.');
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _database.db.transaction((txn) async {
+      await txn.update(
+        'closed_days',
+        {'reopened_at': now, 'reopened_by': userId},
+        where: 'attendance_date = ?',
+        whereArgs: [date],
+      );
+      await txn.insert('audit_logs', {
+        'action': 'day_reopen',
+        'entity_type': 'attendance_day',
+        'entity_id': date,
+        'user_id': userId,
+        'occurred_at': now,
+        'old_value': jsonEncode({'closed': true}),
+        'new_value': jsonEncode({'closed': false}),
+      });
+    });
+  }
+
+  Future<void> closeDay({
+    required String userId,
+    String? date,
+    bool markUnregisteredAbsent = false,
+  }) async {
+    await _requireManager(userId);
     final target = date ?? dayKey();
+    if (await isDayClosed(target)) {
+      throw StateError('هذا اليوم مغلق مسبقًا.');
+    }
+    if (markUnregisteredAbsent) {
+      final remaining = await unregistered(date: target);
+      final now = DateTime.now().toUtc().toIso8601String();
+      await _database.db.transaction((txn) async {
+        for (final student in remaining) {
+          await txn.insert('attendance', {
+            'id': _uuid.v4(),
+            'student_id': student['id'],
+            'status': AttendanceStatus.absent.name,
+            'attendance_date': target,
+            'recorded_at': now,
+            'recorded_by': userId,
+            'class_id_snapshot': student['class_id'],
+            'note': 'غياب تلقائي عند إغلاق اليوم بإعداد إداري مفعل',
+            'updated_at': now,
+          });
+        }
+        await txn.insert('audit_logs', {
+          'action': 'attendance_bulk_absent',
+          'entity_type': 'attendance_day',
+          'entity_id': target,
+          'user_id': userId,
+          'occurred_at': now,
+          'new_value': jsonEncode({'count': remaining.length}),
+        });
+      });
+    }
     final report = await getDaily(date: target);
     final summaryValue = await summary(date: target);
     final snapshot = jsonEncode({
@@ -319,6 +474,33 @@ class AttendanceRepository {
 
   static String? _emptyToNull(String? value) =>
       value == null || value.trim().isEmpty ? null : value.trim();
+
+  Future<void> _requireAttendanceWriter(String userId) async {
+    final rows = await _database.db.query(
+      'users',
+      columns: const ['role'],
+      where: 'id = ? AND active = 1',
+      whereArgs: [userId],
+      limit: 1,
+    );
+    if (rows.isEmpty ||
+        !const {'manager', 'attendanceOfficer'}.contains(rows.first['role'])) {
+      throw StateError('لا يملك المستخدم صلاحية تسجيل أو تعديل الحضور.');
+    }
+  }
+
+  Future<void> _requireManager(String userId) async {
+    final rows = await _database.db.query(
+      'users',
+      columns: const ['role'],
+      where: 'id = ? AND active = 1',
+      whereArgs: [userId],
+      limit: 1,
+    );
+    if (rows.isEmpty || rows.first['role'] != 'manager') {
+      throw StateError('هذه العملية متاحة للمدير فقط.');
+    }
+  }
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

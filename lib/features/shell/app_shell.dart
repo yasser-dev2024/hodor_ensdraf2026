@@ -29,7 +29,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       const MoreScreen(),
     ];
     return Scaffold(
-      body: IndexedStack(index: _index, children: pages),
+      body: KeyedSubtree(key: ValueKey(_index), child: pages[_index]),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: (value) {
@@ -43,26 +43,31 @@ class _AppShellState extends ConsumerState<AppShell> {
         },
         destinations: const [
           NavigationDestination(
+            key: ValueKey('nav_home'),
             icon: Icon(Icons.home_outlined),
             selectedIcon: Icon(Icons.home_rounded),
             label: 'الرئيسية',
           ),
           NavigationDestination(
+            key: ValueKey('nav_scan'),
             icon: Icon(Icons.qr_code_scanner_outlined),
             selectedIcon: Icon(Icons.qr_code_scanner_rounded),
             label: 'المسح',
           ),
           NavigationDestination(
+            key: ValueKey('nav_students'),
             icon: Icon(Icons.groups_outlined),
             selectedIcon: Icon(Icons.groups_rounded),
             label: 'الطلاب',
           ),
           NavigationDestination(
+            key: ValueKey('nav_reports'),
             icon: Icon(Icons.bar_chart_outlined),
             selectedIcon: Icon(Icons.bar_chart_rounded),
             label: 'التقارير',
           ),
           NavigationDestination(
+            key: ValueKey('nav_more'),
             icon: Icon(Icons.more_horiz_rounded),
             label: 'المزيد',
           ),

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'core/theme/app_theme.dart';
 import 'features/auth/auth_gate.dart';
@@ -15,6 +16,7 @@ class AttendanceApp extends StatelessWidget {
       title: 'الحضور الصباحي للطلاب',
       locale: const Locale('ar', 'SA'),
       supportedLocales: const [Locale('ar', 'SA')],
+      localizationsDelegates: GlobalMaterialLocalizations.delegates,
       theme: AppTheme.light,
       builder: (context, child) => Directionality(
         textDirection: TextDirection.rtl,

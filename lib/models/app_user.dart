@@ -1,15 +1,18 @@
 enum UserRole {
   manager('المدير'),
-  attendanceOfficer('مسؤول الحضور'),
+  attendanceOfficer('موظف الغياب'),
   studentAffairs('وكيل شؤون الطلاب');
 
   const UserRole(this.label);
   final String label;
 
   bool get canScan => this != UserRole.studentAffairs;
-  bool get canEditAttendance => this == UserRole.manager;
+  bool get canEditAttendance =>
+      this == UserRole.manager || this == UserRole.attendanceOfficer;
   bool get canManage => this == UserRole.manager;
   bool get canViewReports => true;
+  bool get canViewSensitiveStudentData =>
+      this == UserRole.manager || this == UserRole.studentAffairs;
 }
 
 class AppUser {

@@ -2,7 +2,12 @@ $ErrorActionPreference = "Stop"
 $sourceRoot = Split-Path -Parent $PSScriptRoot
 $sourceTruststore = Join-Path $sourceRoot "android\windows-cacerts"
 $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("attendance-release-build-" + [Guid]::NewGuid().ToString("N"))
-$releaseTarget = Join-Path $sourceRoot "releases\morning-attendance-v1.0.0.apk"
+$pubspec = Get-Content -LiteralPath (Join-Path $sourceRoot "pubspec.yaml") -Raw -Encoding UTF8
+$versionMatch = [Regex]::Match($pubspec, '(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)\s*$')
+if (-not $versionMatch.Success) { throw "Could not read the app version from pubspec.yaml." }
+$versionName = $versionMatch.Groups[1].Value
+$versionCode = $versionMatch.Groups[2].Value
+$releaseTarget = Join-Path $sourceRoot "releases\morning-attendance-v$versionName.apk"
 
 if (-not (Test-Path -LiteralPath $sourceTruststore)) {
     throw "Run tool/create_gradle_truststore.ps1 before building on this machine."
@@ -27,13 +32,19 @@ try {
     $temporaryTruststore = Join-Path $temporaryRoot "android\windows-cacerts"
     $env:JAVA_HOME = "C:\Program Files\Android\Android Studio1\jbr"
     $env:PATH = (Join-Path $env:JAVA_HOME "bin") + ";" + $env:PATH
-    $env:GRADLE_OPTS = "-Djavax.net.ssl.trustStore=$temporaryTruststore -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=JKS"
+    # Release builds on this machine are intentionally offline. Pub may only
+    # use its local cache, and Java/Gradle are pointed at a closed local proxy
+    # so an unexpected repository or redirect can never reach the internet.
+    $env:HTTP_PROXY = "http://127.0.0.1:9"
+    $env:HTTPS_PROXY = "http://127.0.0.1:9"
+    $env:NO_PROXY = "localhost,127.0.0.1"
+    $env:GRADLE_OPTS = "-Djavax.net.ssl.trustStore=$temporaryTruststore -Djavax.net.ssl.trustStorePassword=changeit -Djavax.net.ssl.trustStoreType=JKS -Dorg.gradle.offline=true -Dhttp.proxyHost=127.0.0.1 -Dhttp.proxyPort=9 -Dhttps.proxyHost=127.0.0.1 -Dhttps.proxyPort=9"
 
     Push-Location $temporaryRoot
     try {
-        & flutter pub get
-        if ($LASTEXITCODE -ne 0) { throw "flutter pub get failed with exit code $LASTEXITCODE" }
-        & flutter build apk --release
+        & flutter pub get --offline
+        if ($LASTEXITCODE -ne 0) { throw "flutter pub get --offline failed with exit code $LASTEXITCODE" }
+        & flutter build apk --release --no-pub
         if ($LASTEXITCODE -ne 0) { throw "Flutter Android build failed with exit code $LASTEXITCODE" }
     }
     finally {
@@ -43,6 +54,20 @@ try {
     $builtApk = Join-Path $temporaryRoot "build\app\outputs\flutter-apk\app-release.apk"
     if (-not (Test-Path -LiteralPath $builtApk)) { throw "The release APK was not produced." }
     Copy-Item -LiteralPath $builtApk -Destination $releaseTarget -Force
+    $apkFile = Get-Item -LiteralPath $releaseTarget
+    $apkSize = "{0:N1} MB" -f ($apkFile.Length / 1MB)
+    $apkHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $releaseTarget).Hash
+    $downloadPage = Join-Path $sourceRoot "index.html"
+    if (Test-Path -LiteralPath $downloadPage) {
+        $page = Get-Content -LiteralPath $downloadPage -Raw -Encoding UTF8
+        $page = [Regex]::Replace($page, '(<dd id="apk-size">)[^<]*(</dd>)', { param($match) $match.Groups[1].Value + $apkSize + $match.Groups[2].Value })
+        $page = [Regex]::Replace($page, '(<dd id="apk-sha256">)[^<]*(</dd>)', { param($match) $match.Groups[1].Value + $apkHash + $match.Groups[2].Value })
+        $releaseDate = (Get-Date).ToString('yyyy-MM-dd')
+        $page = [Regex]::Replace($page, '(<dd id="release-date">)[^<]*(</dd>)', { param($match) $match.Groups[1].Value + $releaseDate + $match.Groups[2].Value })
+        $page = [Regex]::Replace($page, '(<dd id="app-version">)[^<]*(</dd>)', { param($match) $match.Groups[1].Value + "$versionName ($versionCode)" + $match.Groups[2].Value })
+        $page = [Regex]::Replace($page, 'href="releases/morning-attendance-v[^"]+\.apk"', "href=`"releases/morning-attendance-v$versionName.apk`"")
+        [IO.File]::WriteAllText($downloadPage, $page, [Text.UTF8Encoding]::new($false))
+    }
     Write-Output "Release APK copied to $releaseTarget"
 }
 finally {

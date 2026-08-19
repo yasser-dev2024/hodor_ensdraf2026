@@ -12,6 +12,8 @@ import '../../models/attendance_record.dart';
 import '../../models/student.dart';
 import '../students/student_photo.dart';
 
+enum _ExistingAction { nextStudent, changeStatus, departure }
+
 class ScannerScreen extends ConsumerStatefulWidget {
   const ScannerScreen({this.classId, this.classLabel, super.key});
   final String? classId;
@@ -29,6 +31,8 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   String? _lastToken;
   DateTime? _lastScanAt;
   double _zoom = 0;
+  bool _soundEnabled = true;
+  bool _hapticEnabled = true;
 
   @override
   void initState() {
@@ -38,11 +42,23 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
       detectionSpeed: DetectionSpeed.noDuplicates,
       autoStart: true,
     );
+    unawaited(_loadFeedbackSettings());
+  }
+
+  Future<void> _loadFeedbackSettings() async {
+    try {
+      final settings = await ref.read(settingsRepositoryProvider).getAll();
+      _soundEnabled = settings['scan_sound'] != 'false';
+      _hapticEnabled = settings['scan_haptic'] != 'false';
+    } catch (_) {
+      _soundEnabled = true;
+      _hapticEnabled = true;
+    }
   }
 
   @override
   void dispose() {
-    unawaited(_controller.dispose());
+    unawaited(_controller.dispose().catchError((Object _) {}));
     super.dispose();
   }
 
@@ -88,7 +104,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                         const Spacer(),
                         _CameraButton(
                           icon: Icons.flash_on_rounded,
-                          onTap: _controller.toggleTorch,
+                          onTap: _toggleTorch,
                         ),
                       ],
                     ),
@@ -116,7 +132,11 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                               value: _zoom,
                               onChanged: (value) {
                                 setState(() => _zoom = value);
-                                _controller.setZoomScale(value);
+                                unawaited(
+                                  _controller
+                                      .setZoomScale(value)
+                                      .catchError((Object _) {}),
+                                );
                               },
                             ),
                           ),
@@ -139,6 +159,10 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                 flex: 7,
                 child: _StudentResult(
                   student: _student!,
+                  showSensitiveId: ref
+                      .read(currentUserProvider)!
+                      .role
+                      .canViewSensitiveStudentData,
                   saving: _saving,
                   onCancel: _resume,
                   onStatus: _recordStatus,
@@ -167,50 +191,63 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     _lastToken = token;
     _lastScanAt = now;
     _handling = true;
-    await _controller.stop();
-    final student = await ref
-        .read(studentRepositoryProvider)
-        .getByBarcode(token);
-    if (!mounted) return;
-    if (student == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('رمز غير معروف أو الطالب غير نشط.'),
-          backgroundColor: AppColors.absent,
-        ),
-      );
+    try {
+      await _controller.stop();
+      final student = await ref
+          .read(studentRepositoryProvider)
+          .getByBarcode(token);
+      if (!mounted) return;
+      if (student == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('رمز غير معروف أو الطالب غير نشط.'),
+            backgroundColor: AppColors.absent,
+          ),
+        );
+        await _restartScanner();
+        return;
+      }
+      if (widget.classId != null && student.classId != widget.classId) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('${student.name} ليس ضمن ${widget.classLabel}.'),
+            backgroundColor: AppColors.excused,
+          ),
+        );
+        await _restartScanner();
+        return;
+      }
+      if (_hapticEnabled) await HapticFeedback.mediumImpact();
+      if (_soundEnabled) await SystemSound.play(SystemSoundType.click);
+      final existing = await ref
+          .read(attendanceRepositoryProvider)
+          .getForStudent(student.id);
+      if (!mounted) return;
+      if (existing != null) {
+        await _showExisting(student, existing);
+        await _restartScanner();
+        return;
+      }
+      setState(() {
+        _student = student;
+        _handling = false;
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تعذر معالجة الرمز. أُعيد تشغيل الماسح بأمان.'),
+            backgroundColor: AppColors.absent,
+          ),
+        );
+      }
       await _restartScanner();
-      return;
     }
-    if (widget.classId != null && student.classId != widget.classId) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${student.name} ليس ضمن ${widget.classLabel}.'),
-          backgroundColor: AppColors.excused,
-        ),
-      );
-      await _restartScanner();
-      return;
-    }
-    await HapticFeedback.mediumImpact();
-    final existing = await ref
-        .read(attendanceRepositoryProvider)
-        .getForStudent(student.id);
-    if (!mounted) return;
-    if (existing != null) {
-      await _showExisting(student, existing);
-      await _restartScanner();
-      return;
-    }
-    setState(() {
-      _student = student;
-      _handling = false;
-    });
   }
 
   Future<void> _showExisting(Student student, AttendanceRecord record) async {
     final user = ref.read(currentUserProvider)!;
-    final change = await showDialog<bool>(
+    final action = await showDialog<_ExistingAction>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
@@ -242,18 +279,52 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () =>
+                Navigator.pop(context, _ExistingAction.nextStudent),
             child: const Text('الطالب التالي'),
           ),
           if (user.role.canEditAttendance)
+            TextButton(
+              onPressed: () =>
+                  Navigator.pop(context, _ExistingAction.departure),
+              child: Text(
+                record.departureAt == null
+                    ? 'تسجيل الانصراف'
+                    : 'تحديث الانصراف',
+              ),
+            ),
+          if (user.role.canEditAttendance)
             FilledButton(
-              onPressed: () => Navigator.pop(context, true),
+              onPressed: () =>
+                  Navigator.pop(context, _ExistingAction.changeStatus),
               child: const Text('تعديل الحالة'),
             ),
         ],
       ),
     );
-    if (change == true && mounted) {
+    if (action == _ExistingAction.departure && mounted) {
+      final details = await _excuseDetails(departure: true);
+      if (details != null) {
+        await ref
+            .read(attendanceRepositoryProvider)
+            .recordDeparture(
+              recordId: record.id,
+              userId: user.id,
+              reason: details.$1,
+              note: details.$2,
+              receiverName: details.$3,
+            );
+        refreshData(ref);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('تم تسجيل انصراف ${student.name} الآن.'),
+              backgroundColor: AppColors.excused,
+            ),
+          );
+        }
+      }
+    } else if (action == _ExistingAction.changeStatus && mounted) {
       final status = await showModalBottomSheet<AttendanceStatus>(
         context: context,
         showDragHandle: true,
@@ -319,7 +390,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
       if (result.wasExisting) {
         await _showExisting(_student!, result.record);
       } else {
-        await HapticFeedback.lightImpact();
+        if (_hapticEnabled) await HapticFeedback.lightImpact();
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -342,7 +413,9 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     }
   }
 
-  Future<(String?, String?, String?)?> _excuseDetails() async {
+  Future<(String?, String?, String?)?> _excuseDetails({
+    bool departure = false,
+  }) async {
     final reason = TextEditingController();
     final note = TextEditingController();
     final receiver = TextEditingController();
@@ -360,9 +433,9 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text(
-              'تفاصيل الاستئذان',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 19),
+            Text(
+              departure ? 'تفاصيل الانصراف' : 'تفاصيل الاستئذان',
+              style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 19),
             ),
             const SizedBox(height: 14),
             TextField(
@@ -388,7 +461,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                 note.text,
                 receiver.text,
               )),
-              child: const Text('تسجيل مستأذن'),
+              child: Text(departure ? 'تسجيل وقت الانصراف' : 'تسجيل مستأذن'),
             ),
           ],
         ),
@@ -407,13 +480,34 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         _handling = false;
       });
     }
-    await _controller.start();
+    await _startScannerSafely();
   }
 
   Future<void> _restartScanner() async {
     _handling = false;
     await Future<void>.delayed(const Duration(milliseconds: 450));
-    if (mounted) await _controller.start();
+    await _startScannerSafely();
+  }
+
+  Future<void> _startScannerSafely() async {
+    if (!mounted) return;
+    try {
+      await _controller.start();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'تعذر إعادة تشغيل الكاميرا. أغلق شاشة المسح وافتحها مجددًا.',
+            ),
+          ),
+        );
+      }
+    }
+  }
+
+  void _toggleTorch() {
+    unawaited(_controller.toggleTorch().catchError((Object _) {}));
   }
 
   static Color _statusColor(AttendanceStatus status) => switch (status) {
@@ -432,11 +526,13 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
 class _StudentResult extends StatelessWidget {
   const _StudentResult({
     required this.student,
+    required this.showSensitiveId,
     required this.saving,
     required this.onCancel,
     required this.onStatus,
   });
   final Student student;
+  final bool showSensitiveId;
   final bool saving;
   final Future<void> Function() onCancel;
   final Future<void> Function(AttendanceStatus) onStatus;
@@ -474,7 +570,7 @@ class _StudentResult extends StatelessWidget {
             ),
           ),
           Text(
-            'السجل: ${student.maskedNationalId}',
+            'السجل: ${showSensitiveId ? student.nationalId : student.maskedNationalId}',
             style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
           ),
           const SizedBox(height: 15),
@@ -580,35 +676,116 @@ class _ProgressPill extends ConsumerWidget {
   final String classId;
   final String classLabel;
   @override
-  Widget build(
-    BuildContext context,
-    WidgetRef ref,
-  ) => FutureBuilder<DailySummary>(
-    future: ref.read(attendanceRepositoryProvider).summary(classId: classId),
-    builder: (context, snapshot) {
-      final summary = snapshot.data;
-      return Container(
-        margin: const EdgeInsets.only(bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: Colors.black54,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(color: Colors.white24),
-        ),
-        child: Text(
-          summary == null
-              ? classLabel
-              : '$classLabel  •  تم تسجيل ${summary.registered} من ${summary.totalStudents}',
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
-            fontSize: 12,
+  Widget build(BuildContext context, WidgetRef ref) {
+    final repository = ref.read(attendanceRepositoryProvider);
+    return FutureBuilder<List<Object>>(
+      future: Future.wait<Object>([
+        repository.summary(classId: classId),
+        repository.unregistered(classId: classId),
+      ]),
+      builder: (context, snapshot) {
+        final summary = snapshot.hasData
+            ? snapshot.data![0] as DailySummary
+            : null;
+        final remaining = snapshot.hasData
+            ? snapshot.data![1] as List<Map<String, Object?>>
+            : const <Map<String, Object?>>[];
+        final visibleNames = remaining
+            .take(2)
+            .map((row) => row['name'] as String)
+            .join('، ');
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(22),
+            onTap: remaining.isEmpty
+                ? null
+                : () => _showRemaining(context, remaining),
+            child: Container(
+              margin: const EdgeInsets.only(bottom: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(22),
+                border: Border.all(color: Colors.white24),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    summary == null
+                        ? classLabel
+                        : '$classLabel  •  تم تسجيل ${summary.registered} من ${summary.totalStudents}  •  المتبقي ${summary.remaining}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (visibleNames.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      'المتبقون: $visibleNames${remaining.length > 2 ? '…' : ''}  (اضغط للكل)',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           ),
+        );
+      },
+    );
+  }
+
+  void _showRemaining(
+    BuildContext context,
+    List<Map<String, Object?>> students,
+  ) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (context) => SafeArea(
+        child: Column(
+          children: [
+            ListTile(
+              title: Text(
+                'الطلاب المتبقون (${students.length})',
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              subtitle: Text(classLabel),
+            ),
+            Expanded(
+              child: ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
+                itemCount: students.length,
+                separatorBuilder: (_, __) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final student = students[index];
+                  final label = [
+                    student['grade_name'],
+                    student['class_name'],
+                  ].whereType<String>().join(' / ');
+                  return ListTile(
+                    leading: CircleAvatar(child: Text('${index + 1}')),
+                    title: Text(student['name'] as String),
+                    subtitle: label.isEmpty ? null : Text(label),
+                  );
+                },
+              ),
+            ),
+          ],
         ),
-      );
-    },
-  );
+      ),
+    );
+  }
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

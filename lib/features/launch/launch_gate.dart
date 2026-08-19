@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
@@ -7,7 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../services/startup_permission_service.dart';
 import '../../services/usage_policy_service.dart';
 
-enum _LaunchStage { loading, activation, agreement, permissions, ready }
+enum _LaunchStage { loading, agreement, permissions, ready }
 
 class LaunchGate extends ConsumerStatefulWidget {
   const LaunchGate({required this.child, super.key});
@@ -21,7 +20,6 @@ class LaunchGate extends ConsumerStatefulWidget {
 class _LaunchGateState extends ConsumerState<LaunchGate>
     with WidgetsBindingObserver {
   _LaunchStage _stage = _LaunchStage.loading;
-  String _deviceCode = '';
   List<StartupPermissionItem> _permissions = const [];
   bool _permissionsSkippedForSession = false;
 
@@ -48,17 +46,6 @@ class _LaunchGateState extends ConsumerState<LaunchGate>
 
   Future<void> _evaluate() async {
     if (mounted) setState(() => _stage = _LaunchStage.loading);
-    final activation = ref.read(activationServiceProvider);
-    final deviceCode = await activation.deviceCode();
-    final license = await activation.validStoredLicense();
-    if (!mounted) return;
-    if (license == null) {
-      setState(() {
-        _deviceCode = deviceCode;
-        _stage = _LaunchStage.activation;
-      });
-      return;
-    }
     final policyAccepted = await ref
         .read(usagePolicyServiceProvider)
         .isCurrentVersionAccepted();
@@ -87,10 +74,6 @@ class _LaunchGateState extends ConsumerState<LaunchGate>
     return switch (_stage) {
       _LaunchStage.loading => const Scaffold(
         body: Center(child: CircularProgressIndicator()),
-      ),
-      _LaunchStage.activation => ActivationScreen(
-        deviceCode: _deviceCode,
-        onActivated: _evaluate,
       ),
       _LaunchStage.agreement => UsageAgreementScreen(
         onAccepted: () async {
@@ -191,169 +174,6 @@ class _LaunchFrame extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-class ActivationScreen extends ConsumerStatefulWidget {
-  const ActivationScreen({
-    required this.deviceCode,
-    required this.onActivated,
-    super.key,
-  });
-
-  final String deviceCode;
-  final Future<void> Function() onActivated;
-
-  @override
-  ConsumerState<ActivationScreen> createState() => _ActivationScreenState();
-}
-
-class _ActivationScreenState extends ConsumerState<ActivationScreen> {
-  final _controller = TextEditingController();
-  bool _busy = false;
-  String? _error;
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return _LaunchFrame(
-      icon: Icons.verified_user_outlined,
-      title: 'تفعيل التطبيق',
-      subtitle:
-          'أرسل رمز الجهاز إلى المصمم، ثم الصق مفتاح التفعيل الصادر لهذا الجهاز.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            'رمز هذا الجهاز',
-            style: TextStyle(fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 8),
-          InkWell(
-            borderRadius: BorderRadius.circular(14),
-            onTap: () async {
-              final messenger = ScaffoldMessenger.of(context);
-              await Clipboard.setData(ClipboardData(text: widget.deviceCode));
-              if (mounted) {
-                messenger.showSnackBar(
-                  const SnackBar(content: Text('تم نسخ رمز الجهاز.')),
-                );
-              }
-            },
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 15),
-              decoration: BoxDecoration(
-                color: const Color(0xFFEAF4F7),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFC9E1E8)),
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: SelectableText(
-                      widget.deviceCode,
-                      textDirection: TextDirection.ltr,
-                      style: const TextStyle(
-                        color: AppColors.navy,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 17,
-                        letterSpacing: 1.2,
-                      ),
-                    ),
-                  ),
-                  const Icon(Icons.copy_rounded, color: AppColors.blue),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 18),
-          SizedBox(
-            height: 64,
-            child: TextField(
-              controller: _controller,
-              maxLines: 1,
-              textDirection: TextDirection.ltr,
-              keyboardType: TextInputType.visiblePassword,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: InputDecoration(
-                labelText: 'مفتاح التفعيل',
-                hintText: 'الصق المفتاح هنا',
-                prefixIcon: const Icon(Icons.key_rounded),
-                suffixIcon: IconButton(
-                  tooltip: 'لصق المفتاح',
-                  onPressed: () async {
-                    final data = await Clipboard.getData(Clipboard.kTextPlain);
-                    if (!mounted || data?.text == null) return;
-                    _controller.text = data!.text!.trim();
-                  },
-                  icon: const Icon(Icons.content_paste_rounded),
-                ),
-              ),
-            ),
-          ),
-          if (_error != null) ...[
-            const SizedBox(height: 10),
-            Text(
-              _error!,
-              style: const TextStyle(
-                color: AppColors.absent,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-          const SizedBox(height: 17),
-          FilledButton.icon(
-            onPressed: _busy ? null : _activate,
-            icon: _busy
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.verified_rounded),
-            label: const Text('التحقق من المفتاح والمتابعة'),
-          ),
-          const SizedBox(height: 10),
-          const Text(
-            'يتم التحقق محليًا دون إرسال بيانات الجهاز أو المدرسة إلى الإنترنت.',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: Colors.blueGrey),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _activate() async {
-    if (_controller.text.trim().isEmpty) {
-      setState(() => _error = 'أدخل مفتاح التفعيل أولًا.');
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    final result = await ref
-        .read(activationServiceProvider)
-        .activate(_controller.text);
-    if (!mounted) return;
-    if (!result.isValid) {
-      setState(() {
-        _busy = false;
-        _error = result.error;
-      });
-      return;
-    }
-    await widget.onActivated();
   }
 }
 

@@ -23,9 +23,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _agentName = TextEditingController();
   final _agentPhone = TextEditingController();
   final _contactPhone = TextEditingController();
+  final _whatsappTemplate = TextEditingController();
+  final _backupReminderDays = TextEditingController();
   bool _loading = true;
   bool _saving = false;
   String? _logoPath;
+  bool _scanSound = true;
+  bool _scanHaptic = true;
+  bool _autoAbsentOnClose = false;
+  bool _autoArchivePdf = true;
+  String _barcodeCardSize = 'standard';
+  String _agentSendMethod = 'whatsapp';
 
   @override
   void initState() {
@@ -41,19 +49,40 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _agentName.dispose();
     _agentPhone.dispose();
     _contactPhone.dispose();
+    _whatsappTemplate.dispose();
+    _backupReminderDays.dispose();
     super.dispose();
   }
 
   Future<void> _load() async {
-    final values = await ref.read(settingsRepositoryProvider).getAll();
-    _schoolName.text = values['school_name'] ?? '';
-    _academicYear.text = values['academic_year'] ?? '';
-    _semester.text = values['semester'] ?? '';
-    _agentName.text = values['agent_name'] ?? '';
-    _agentPhone.text = values['agent_phone'] ?? '';
-    _contactPhone.text = values['contact_phone'] ?? '';
-    _logoPath = values['school_logo_path'];
-    if (mounted) setState(() => _loading = false);
+    try {
+      final values = await ref.read(settingsRepositoryProvider).getAll();
+      _schoolName.text = values['school_name'] ?? '';
+      _academicYear.text = values['academic_year'] ?? '';
+      _semester.text = values['semester'] ?? '';
+      _agentName.text = values['agent_name'] ?? '';
+      _agentPhone.text = values['agent_phone'] ?? '';
+      _contactPhone.text = values['contact_phone'] ?? '';
+      _whatsappTemplate.text =
+          values['whatsapp_template'] ??
+          'تقرير الغياب الصباحي\nالتاريخ: {date}\nإجمالي الطلاب: {total}\nالحاضرون: {present}\nالغائبون: {absent}\nالمستأذنون: {excused}\n\nيرجى إرفاق التقرير التفصيلي عند الحاجة.';
+      _backupReminderDays.text = values['backup_reminder_days'] ?? '7';
+      _scanSound = values['scan_sound'] != 'false';
+      _scanHaptic = values['scan_haptic'] != 'false';
+      _autoAbsentOnClose = values['auto_absent_on_close'] == 'true';
+      _autoArchivePdf = values['auto_archive_pdf'] != 'false';
+      _barcodeCardSize = values['barcode_card_size'] ?? 'standard';
+      _agentSendMethod = values['agent_send_method'] ?? 'whatsapp';
+      _logoPath = values['school_logo_path'];
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر تحميل الإعدادات. حاول مجددًا.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
@@ -150,6 +179,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           ),
                         ),
                         const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          value: _agentSendMethod,
+                          decoration: const InputDecoration(
+                            labelText: 'وسيلة الإرسال الافتراضية',
+                            prefixIcon: Icon(Icons.ios_share_rounded),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'whatsapp',
+                              child: Text('واتساب إلى الرقم المحفوظ'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'share',
+                              child: Text('مشاركة PDF (بريد/واتساب/غيره)'),
+                            ),
+                          ],
+                          onChanged: (value) => setState(
+                            () => _agentSendMethod = value ?? 'whatsapp',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         TextField(
                           controller: _agentPhone,
                           keyboardType: TextInputType.phone,
@@ -166,6 +216,122 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           decoration: const InputDecoration(
                             labelText: 'رقم تواصل إضافي',
                             prefixIcon: Icon(Icons.phone_outlined),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Card(
+                  child: Column(
+                    children: [
+                      const ListTile(
+                        leading: Icon(
+                          Icons.qr_code_2_rounded,
+                          color: AppColors.blue,
+                        ),
+                        title: Text(
+                          'إعدادات المسح والباركود',
+                          style: TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        subtitle: Text(
+                          'الرمز آمن دائمًا ولا يحتوي على السجل المدني الخام.',
+                        ),
+                      ),
+                      SwitchListTile(
+                        value: _scanSound,
+                        onChanged: (value) =>
+                            setState(() => _scanSound = value),
+                        title: const Text('صوت نجاح المسح'),
+                      ),
+                      SwitchListTile(
+                        value: _scanHaptic,
+                        onChanged: (value) =>
+                            setState(() => _scanHaptic = value),
+                        title: const Text('اهتزاز نجاح المسح'),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: DropdownButtonFormField<String>(
+                          value: _barcodeCardSize,
+                          decoration: const InputDecoration(
+                            labelText: 'حجم بطاقة الباركود',
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'compact',
+                              child: Text('صغيرة — عدد أكبر في الصفحة'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'standard',
+                              child: Text('قياسية'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'large',
+                              child: Text('كبيرة وواضحة'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              setState(() => _barcodeCardSize = value);
+                            }
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'إعدادات التقارير والنسخ الاحتياطي',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w900,
+                            color: AppColors.navy,
+                          ),
+                        ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: _autoArchivePdf,
+                          onChanged: (value) =>
+                              setState(() => _autoArchivePdf = value),
+                          title: const Text('أرشفة PDF تلقائيًا عند إنشائه'),
+                        ),
+                        SwitchListTile(
+                          contentPadding: EdgeInsets.zero,
+                          value: _autoAbsentOnClose,
+                          onChanged: (value) =>
+                              setState(() => _autoAbsentOnClose = value),
+                          title: const Text(
+                            'تحويل غير المسجلين إلى غياب عند الإغلاق',
+                          ),
+                          subtitle: const Text(
+                            'حساس ومعطل افتراضيًا؛ تظهر رسالة تأكيد قبل التنفيذ.',
+                          ),
+                        ),
+                        TextField(
+                          controller: _whatsappTemplate,
+                          minLines: 4,
+                          maxLines: 8,
+                          decoration: const InputDecoration(
+                            labelText: 'قالب رسالة واتساب',
+                            helperText:
+                                'الحقول: {date} {total} {present} {absent} {excused}',
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
+                          controller: _backupReminderDays,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'التذكير بالنسخ الاحتياطي كل (يوم)',
+                            prefixIcon: Icon(Icons.backup_outlined),
                           ),
                         ),
                       ],
@@ -224,7 +390,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         repository.set('semester', _semester.text),
         repository.set('agent_name', _agentName.text),
         repository.set('agent_phone', _agentPhone.text),
+        repository.set('agent_send_method', _agentSendMethod),
         repository.set('contact_phone', _contactPhone.text),
+        repository.set('whatsapp_template', _whatsappTemplate.text),
+        repository.set(
+          'backup_reminder_days',
+          '${int.tryParse(_backupReminderDays.text.trim())?.clamp(1, 365) ?? 7}',
+        ),
+        repository.set('scan_sound', '$_scanSound'),
+        repository.set('scan_haptic', '$_scanHaptic'),
+        repository.set('auto_absent_on_close', '$_autoAbsentOnClose'),
+        repository.set('auto_archive_pdf', '$_autoArchivePdf'),
+        repository.set('barcode_card_size', _barcodeCardSize),
       ]);
       refreshData(ref);
       if (mounted) {
@@ -234,6 +411,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             backgroundColor: AppColors.present,
           ),
         );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('تعذر حفظ الإعدادات: $error')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);

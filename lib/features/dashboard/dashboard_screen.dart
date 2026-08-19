@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
+import '../../models/period_report.dart';
 import '../reports/daily_report_screen.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
@@ -40,6 +41,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     ref.watch(dataRevisionProvider);
     final user = ref.watch(currentUserProvider)!;
     final summaryFuture = ref.read(attendanceRepositoryProvider).summary();
+    final analyticsFuture = ref
+        .read(reportRepositoryProvider)
+        .analytics(startDate: DateTime(_now.year, _now.month), endDate: _now);
     return SafeArea(
       child: RefreshIndicator(
         onRefresh: () async => refreshData(ref),
@@ -119,6 +123,17 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
             FutureBuilder<DailySummary>(
               future: summaryFuture,
               builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Text(
+                        'تعذر تحميل إحصاءات اليوم. اسحب الشاشة لإعادة المحاولة؛ بياناتك لم تُحذف.',
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  );
+                }
                 if (!snapshot.hasData) {
                   return const Center(
                     child: Padding(
@@ -259,6 +274,30 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
               },
             ),
             const SizedBox(height: 22),
+            FutureBuilder<AttendanceAnalytics>(
+              future: analyticsFuture,
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(20),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: Text('تعذر تحميل الإحصاءات المتقدمة الآن.'),
+                    ),
+                  );
+                }
+                if (!snapshot.hasData) return const SizedBox.shrink();
+                return _AnalyticsCard(analytics: snapshot.data!);
+              },
+            ),
+            const SizedBox(height: 22),
             FilledButton.icon(
               onPressed: user.role.canScan ? widget.onStartScan : null,
               icon: const Icon(Icons.qr_code_scanner_rounded, size: 28),
@@ -383,5 +422,117 @@ class _MiniStatus extends StatelessWidget {
         ),
       ),
     ],
+  );
+}
+
+class _AnalyticsCard extends StatelessWidget {
+  const _AnalyticsCard({required this.analytics});
+  final AttendanceAnalytics analytics;
+
+  @override
+  Widget build(BuildContext context) => Card(
+    child: ExpansionTile(
+      leading: const Icon(Icons.insights_rounded, color: AppColors.blue),
+      title: const Text(
+        'إحصاءات هذا الشهر',
+        style: TextStyle(fontWeight: FontWeight.w900, color: AppColors.navy),
+      ),
+      subtitle: Text(
+        'الحضور العام ${(analytics.report.attendanceRate * 100).toStringAsFixed(1)}٪',
+      ),
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      children: [
+        if (analytics.bestClass != null)
+          _AnalyticsLine(
+            icon: Icons.emoji_events_outlined,
+            label: 'أفضل فصل في الحضور',
+            value:
+                '${analytics.bestClass!.label} — ${(analytics.bestClass!.attendanceRate * 100).toStringAsFixed(1)}٪',
+            color: AppColors.present,
+          ),
+        if (analytics.mostAbsentClass != null)
+          _AnalyticsLine(
+            icon: Icons.warning_amber_rounded,
+            label: 'أكثر فصل في الغياب',
+            value:
+                '${analytics.mostAbsentClass!.label} — ${analytics.mostAbsentClass!.absent}',
+            color: AppColors.absent,
+          ),
+        _RankingTile(
+          title: 'أكثر الطلاب غيابًا',
+          students: analytics.mostAbsent,
+          value: (student) => '${student.absent}',
+        ),
+        _RankingTile(
+          title: 'أكثر الطلاب انضباطًا',
+          students: analytics.mostDisciplined,
+          value: (student) =>
+              '${(student.disciplineRate * 100).toStringAsFixed(1)}٪',
+        ),
+        _RankingTile(
+          title: 'أكثر الطلاب استئذانًا',
+          students: analytics.mostExcused,
+          value: (student) => '${student.excused}',
+        ),
+      ],
+    ),
+  );
+}
+
+class _AnalyticsLine extends StatelessWidget {
+  const _AnalyticsLine({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+  @override
+  Widget build(BuildContext context) => ListTile(
+    dense: true,
+    contentPadding: EdgeInsets.zero,
+    leading: Icon(icon, color: color),
+    title: Text(label, style: const TextStyle(fontWeight: FontWeight.w800)),
+    subtitle: Text(value),
+  );
+}
+
+class _RankingTile extends StatelessWidget {
+  const _RankingTile({
+    required this.title,
+    required this.students,
+    required this.value,
+  });
+  final String title;
+  final List<StudentPeriodStat> students;
+  final String Function(StudentPeriodStat) value;
+  @override
+  Widget build(BuildContext context) => ExpansionTile(
+    tilePadding: EdgeInsets.zero,
+    title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
+    children: students.isEmpty
+        ? const [ListTile(title: Text('لا توجد بيانات كافية.'))]
+        : [
+            for (var index = 0; index < students.length; index++)
+              ListTile(
+                dense: true,
+                leading: CircleAvatar(
+                  radius: 14,
+                  child: Text(
+                    '${index + 1}',
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+                title: Text(students[index].studentName),
+                subtitle: Text(students[index].classLabel),
+                trailing: Text(
+                  value(students[index]),
+                  style: const TextStyle(fontWeight: FontWeight.w900),
+                ),
+              ),
+          ],
   );
 }

@@ -8,6 +8,7 @@ import '../repositories/auth_repository.dart';
 import '../repositories/class_repository.dart';
 import '../repositories/student_repository.dart';
 import '../repositories/settings_repository.dart';
+import '../repositories/report_repository.dart';
 import '../services/backup_service.dart';
 import '../services/activation_service.dart';
 import '../services/data_protection_service.dart';
@@ -44,6 +45,9 @@ final authRepositoryProvider = Provider<AuthRepository>(
 );
 final settingsRepositoryProvider = Provider<SettingsRepository>(
   (ref) => SettingsRepository(ref.watch(databaseProvider)),
+);
+final reportRepositoryProvider = Provider<ReportRepository>(
+  (ref) => ReportRepository(ref.watch(databaseProvider)),
 );
 final activationServiceProvider = Provider<ActivationService>(
   (ref) => ActivationService(ref.watch(settingsRepositoryProvider)),

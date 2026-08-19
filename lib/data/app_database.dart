@@ -6,7 +6,7 @@ class AppDatabase {
 
   Database db;
   final String? path;
-  static const schemaVersion = 1;
+  static const schemaVersion = 2;
 
   static Future<AppDatabase> open() async {
     final root = await getDatabasesPath();
@@ -20,11 +20,57 @@ class AppDatabase {
         await db.rawQuery('PRAGMA journal_mode = WAL');
       },
       onCreate: (db, version) async => _createSchema(db),
+      onUpgrade: _upgradeSchema,
     );
     return AppDatabase(database, path: p.join(root, 'morning_attendance.db'));
   }
 
   static Future<void> createSchemaForTesting(Database db) => _createSchema(db);
+
+  static Future<void> upgradeSchemaForTesting(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) => _upgradeSchema(db, oldVersion, newVersion);
+
+  static Future<void> _upgradeSchema(
+    Database db,
+    int oldVersion,
+    int newVersion,
+  ) async {
+    if (oldVersion < 2) {
+      await db.transaction((txn) async {
+        await txn.execute('ALTER TABLE users ADD COLUMN password_hash TEXT');
+        await txn.execute('ALTER TABLE users ADD COLUMN password_salt TEXT');
+        await txn.execute(
+          'ALTER TABLE users ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0',
+        );
+        await txn.execute('ALTER TABLE users ADD COLUMN locked_until TEXT');
+        await txn.execute(
+          'ALTER TABLE users ADD COLUMN biometric_enabled INTEGER NOT NULL DEFAULT 0',
+        );
+        await txn.execute('''
+          CREATE TABLE IF NOT EXISTS report_archives (
+            id TEXT PRIMARY KEY,
+            report_type TEXT NOT NULL,
+            period_start TEXT NOT NULL,
+            period_end TEXT NOT NULL,
+            scope_type TEXT NOT NULL,
+            scope_id TEXT,
+            file_path TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT
+          )
+        ''');
+        await txn.execute(
+          'CREATE INDEX IF NOT EXISTS idx_transfers_student ON transfers(student_id, transferred_at)',
+        );
+        await txn.execute(
+          'CREATE INDEX IF NOT EXISTS idx_report_archives_period ON report_archives(report_type, period_start, period_end)',
+        );
+      });
+    }
+  }
 
   static Future<void> _createSchema(Database db) async {
     await db.transaction((txn) async {
@@ -53,6 +99,11 @@ class AppDatabase {
           role TEXT NOT NULL,
           pin_hash TEXT NOT NULL,
           pin_salt TEXT NOT NULL,
+          password_hash TEXT,
+          password_salt TEXT,
+          failed_attempts INTEGER NOT NULL DEFAULT 0,
+          locked_until TEXT,
+          biometric_enabled INTEGER NOT NULL DEFAULT 0,
           active INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL,
           last_login_at TEXT
@@ -148,6 +199,19 @@ class AppDatabase {
           updated_at TEXT NOT NULL
         )
       ''');
+      await txn.execute('''
+        CREATE TABLE report_archives (
+          id TEXT PRIMARY KEY,
+          report_type TEXT NOT NULL,
+          period_start TEXT NOT NULL,
+          period_end TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT,
+          file_path TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          created_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT
+        )
+      ''');
       await txn.execute('CREATE INDEX idx_students_name ON students(name)');
       await txn.execute(
         'CREATE INDEX idx_students_class_id ON students(class_id)',
@@ -166,6 +230,12 @@ class AppDatabase {
       );
       await txn.execute(
         'CREATE INDEX idx_attendance_class_date ON attendance(class_id_snapshot, attendance_date)',
+      );
+      await txn.execute(
+        'CREATE INDEX idx_transfers_student ON transfers(student_id, transferred_at)',
+      );
+      await txn.execute(
+        'CREATE INDEX idx_report_archives_period ON report_archives(report_type, period_start, period_end)',
       );
     });
   }

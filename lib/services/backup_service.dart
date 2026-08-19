@@ -49,12 +49,32 @@ class BackupService {
     archive.addFile(ArchiveFile('data_key.bin', keyBytes.length, keyBytes));
     final docs = await getApplicationDocumentsDirectory();
     final photos = Directory(p.join(docs.path, 'student_photos'));
-    if (await photos.exists()) {
-      await for (final entity in photos.list(followLinks: false)) {
-        if (entity is! File) continue;
-        final bytes = await entity.readAsBytes();
+    await _addDirectoryToArchive(
+      archive,
+      photos,
+      archivePrefix: 'assets/student_photos',
+    );
+    await _addDirectoryToArchive(
+      archive,
+      Directory(p.join(docs.path, 'report_archive')),
+      archivePrefix: 'assets/report_archive',
+    );
+    final logoRows = await _database.db.query(
+      'settings',
+      columns: ['value'],
+      where: "key = 'school_logo_path'",
+      limit: 1,
+    );
+    if (logoRows.isNotEmpty) {
+      final logo = File(logoRows.first['value'] as String);
+      if (await logo.exists()) {
+        final bytes = await logo.readAsBytes();
         archive.addFile(
-          ArchiveFile('photos/${p.basename(entity.path)}', bytes.length, bytes),
+          ArchiveFile(
+            'assets/school_logo/${p.basename(logo.path)}',
+            bytes.length,
+            bytes,
+          ),
         );
       }
     }
@@ -103,6 +123,10 @@ class BackupService {
       );
     }
     final dbBytes = Uint8List.fromList(List<int>.from(databaseFile.content));
+    final restoredKey = List<int>.from(keyFile.content);
+    if (restoredKey.length != 32) {
+      throw const FormatException('مفتاح تشفير النسخة الاحتياطية غير صالح.');
+    }
     final digest = await Sha256().hash(dbBytes);
     if (base64UrlEncode(digest.bytes) != manifest['database_sha256']) {
       throw const FormatException(
@@ -110,7 +134,10 @@ class BackupService {
       );
     }
     final temp = await getTemporaryDirectory();
-    final candidate = File(p.join(temp.path, 'restore_candidate.sqlite'));
+    final restoreStamp = DateTime.now().microsecondsSinceEpoch;
+    final candidate = File(
+      p.join(temp.path, 'restore_candidate_$restoreStamp.sqlite'),
+    );
     await candidate.writeAsBytes(dbBytes, flush: true);
     final checkDb = await openReadOnlyDatabase(candidate.path);
     try {
@@ -134,47 +161,47 @@ class BackupService {
     );
     final targetPath = _database.path;
     if (targetPath == null) throw StateError('مسار قاعدة البيانات غير متاح.');
-    await _database.db.close();
+    final target = File(targetPath);
+    final staged = File('$targetPath.restore_pending_$restoreStamp');
+    final rollback = File('$targetPath.pre_restore_$restoreStamp');
+    final oldKey = _protection.exportKeyForEncryptedBackup();
+    var databaseWasSwapped = false;
+    await candidate.copy(staged.path);
     try {
-      await _protection.importKeyFromEncryptedBackup(
-        List<int>.from(keyFile.content),
-      );
-      await candidate.copy(targetPath);
-      final docs = await getApplicationDocumentsDirectory();
-      final photosDirectory = Directory(p.join(docs.path, 'student_photos'));
-      await photosDirectory.create(recursive: true);
-      for (final file in archive.files.where(
-        (file) => file.isFile && file.name.startsWith('photos/'),
-      )) {
-        final safeName = p.basename(file.name);
-        if (safeName.isEmpty) continue;
-        await File(
-          p.join(photosDirectory.path, safeName),
-        ).writeAsBytes(List<int>.from(file.content), flush: true);
+      await _database.db.rawQuery('PRAGMA wal_checkpoint(FULL)');
+      await _database.db.close();
+      if (!await target.exists()) {
+        throw StateError('قاعدة البيانات الحالية غير موجودة.');
       }
-      _database.db = await openDatabase(
-        targetPath,
-        version: AppDatabase.schemaVersion,
-        onConfigure: (db) async {
-          await db.execute('PRAGMA foreign_keys = ON');
-          await db.rawQuery('PRAGMA journal_mode = WAL');
-        },
+      await target.rename(rollback.path);
+      databaseWasSwapped = true;
+      await _moveSidecarIfPresent('$targetPath-wal', '${rollback.path}-wal');
+      await _moveSidecarIfPresent('$targetPath-shm', '${rollback.path}-shm');
+      await staged.rename(targetPath);
+      await _protection.importKeyFromEncryptedBackup(restoredKey);
+      _database.db = await _openConfiguredDatabase(targetPath);
+      final restoredIntegrity = await _database.db.rawQuery(
+        'PRAGMA integrity_check',
       );
-      final photoRows = await _database.db.query(
-        'students',
-        columns: ['id', 'photo_path'],
-        where: 'photo_path IS NOT NULL',
-      );
-      for (final row in photoRows) {
-        final oldPath = row['photo_path'] as String;
-        final newPath = p.join(photosDirectory.path, p.basename(oldPath));
-        await _database.db.update(
-          'students',
-          {'photo_path': newPath},
-          where: 'id = ?',
-          whereArgs: [row['id']],
+      if (restoredIntegrity.isEmpty ||
+          restoredIntegrity.first.values.first.toString().toLowerCase() !=
+              'ok') {
+        throw const FormatException(
+          'فشل فحص قاعدة البيانات بعد تثبيت النسخة المستعادة.',
         );
       }
+      final protectedRows = await _database.db.query(
+        'students',
+        columns: ['national_id_encrypted'],
+        limit: 1,
+      );
+      if (protectedRows.isNotEmpty) {
+        await _protection.decrypt(
+          protectedRows.first['national_id_encrypted'] as String,
+        );
+      }
+      final docs = await getApplicationDocumentsDirectory();
+      await _restoreManagedFiles(archive, docs);
       await _database.db.insert('audit_logs', {
         'action': 'backup_restore',
         'entity_type': 'system',
@@ -184,14 +211,142 @@ class BackupService {
           'safety_backup': safetyBackup.path,
         }),
       });
+      await _deleteIfExists(rollback);
+      await _deleteIfExists(File('${rollback.path}-wal'));
+      await _deleteIfExists(File('${rollback.path}-shm'));
     } catch (_) {
-      _database.db = await openDatabase(
-        targetPath,
-        version: AppDatabase.schemaVersion,
-      );
+      if (databaseWasSwapped) {
+        if (_database.db.isOpen) await _database.db.close();
+        await _deleteIfExists(target);
+        await _deleteIfExists(File('$targetPath-wal'));
+        await _deleteIfExists(File('$targetPath-shm'));
+        if (await rollback.exists()) await rollback.rename(targetPath);
+        await _moveSidecarIfPresent('${rollback.path}-wal', '$targetPath-wal');
+        await _moveSidecarIfPresent('${rollback.path}-shm', '$targetPath-shm');
+        await _protection.importKeyFromEncryptedBackup(oldKey);
+      }
+      if (!_database.db.isOpen) {
+        _database.db = await _openConfiguredDatabase(targetPath);
+      }
       rethrow;
+    } finally {
+      await _deleteIfExists(candidate);
+      await _deleteIfExists(staged);
     }
     return safetyBackup;
+  }
+
+  Future<void> _restoreManagedFiles(Archive archive, Directory docs) async {
+    final photosDirectory = Directory(p.join(docs.path, 'student_photos'));
+    final reportsDirectory = Directory(p.join(docs.path, 'report_archive'));
+    await photosDirectory.create(recursive: true);
+    await reportsDirectory.create(recursive: true);
+    String? restoredLogoPath;
+    for (final entry in archive.files.where((entry) => entry.isFile)) {
+      final safeName = p.basename(entry.name);
+      if (safeName.isEmpty || safeName == '.' || safeName == '..') continue;
+      File? destination;
+      if (entry.name.startsWith('assets/student_photos/') ||
+          entry.name.startsWith('photos/')) {
+        destination = File(p.join(photosDirectory.path, safeName));
+      } else if (entry.name.startsWith('assets/report_archive/')) {
+        destination = File(p.join(reportsDirectory.path, safeName));
+      } else if (entry.name.startsWith('assets/school_logo/')) {
+        final extension = p.extension(safeName).toLowerCase();
+        final safeExtension =
+            {'.png', '.jpg', '.jpeg', '.webp'}.contains(extension)
+            ? extension
+            : '.png';
+        destination = File(p.join(docs.path, 'school_logo$safeExtension'));
+        restoredLogoPath = destination.path;
+      }
+      if (destination != null) {
+        await destination.writeAsBytes(
+          List<int>.from(entry.content),
+          flush: true,
+        );
+      }
+    }
+    final photoRows = await _database.db.query(
+      'students',
+      columns: ['id', 'photo_path'],
+      where: 'photo_path IS NOT NULL',
+    );
+    for (final row in photoRows) {
+      final oldPath = row['photo_path'] as String;
+      await _database.db.update(
+        'students',
+        {'photo_path': p.join(photosDirectory.path, p.basename(oldPath))},
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+    }
+    final reportRows = await _database.db.query(
+      'report_archives',
+      columns: ['id', 'file_path'],
+    );
+    for (final row in reportRows) {
+      final oldPath = row['file_path'] as String;
+      await _database.db.update(
+        'report_archives',
+        {'file_path': p.join(reportsDirectory.path, p.basename(oldPath))},
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+    }
+    if (restoredLogoPath != null) {
+      await _database.db.rawInsert(
+        '''
+        INSERT INTO settings(key, value, updated_at) VALUES(?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        ''',
+        [
+          'school_logo_path',
+          restoredLogoPath,
+          DateTime.now().toUtc().toIso8601String(),
+        ],
+      );
+    }
+  }
+
+  static Future<void> _addDirectoryToArchive(
+    Archive archive,
+    Directory directory, {
+    required String archivePrefix,
+  }) async {
+    if (!await directory.exists()) return;
+    await for (final entity in directory.list(followLinks: false)) {
+      if (entity is! File) continue;
+      final bytes = await entity.readAsBytes();
+      archive.addFile(
+        ArchiveFile(
+          '$archivePrefix/${p.basename(entity.path)}',
+          bytes.length,
+          bytes,
+        ),
+      );
+    }
+  }
+
+  static Future<Database> _openConfiguredDatabase(String path) => openDatabase(
+    path,
+    version: AppDatabase.schemaVersion,
+    onConfigure: (db) async {
+      await db.execute('PRAGMA foreign_keys = ON');
+      await db.rawQuery('PRAGMA journal_mode = WAL');
+    },
+  );
+
+  static Future<void> _moveSidecarIfPresent(
+    String sourcePath,
+    String destinationPath,
+  ) async {
+    final source = File(sourcePath);
+    if (await source.exists()) await source.rename(destinationPath);
+  }
+
+  static Future<void> _deleteIfExists(File file) async {
+    if (await file.exists()) await file.delete();
   }
 
   Future<Uint8List> _encrypt(Uint8List clear, String password) async {

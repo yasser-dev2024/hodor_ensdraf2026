@@ -47,6 +47,7 @@ class AuditLogScreen extends ConsumerWidget {
                   row['entity_type'] as String? ?? '',
                   style: const TextStyle(fontSize: 10, color: Colors.blueGrey),
                 ),
+                onTap: () => _showDetails(context, row),
               ),
             );
           },
@@ -60,15 +61,69 @@ class AuditLogScreen extends ConsumerWidget {
         'student_create': 'إضافة طالب',
         'student_update': 'تعديل طالب',
         'student_deactivate': 'تعطيل طالب',
+        'student_reactivate': 'إعادة تفعيل طالب',
+        'student_batch_deactivate': 'تعطيل دفعة طلاب',
         'student_transfer': 'نقل طالب',
+        'grade_promotion': 'ترحيل سنوي لصف كامل',
         'attendance_create': 'تسجيل حضور',
         'attendance_update': 'تعديل حالة',
+        'attendance_departure': 'تسجيل انصراف طالب',
+        'attendance_bulk_absent': 'تسجيل الغياب الجماعي عند الإغلاق',
         'excel_import': 'استيراد ملف',
+        'student_import': 'استيراد ملف طلاب',
         'day_close': 'إغلاق تقرير اليوم',
+        'day_reopen': 'إعادة فتح تقرير اليوم',
+        'report_archive_create': 'أرشفة تقرير',
         'backup_restore': 'استعادة نسخة احتياطية',
         'user_create': 'إضافة مستخدم',
+        'user_credentials_reset': 'إعادة تعيين بيانات دخول مستخدم',
+        'user_deactivate': 'تعطيل مستخدم',
+        'login_success': 'تسجيل دخول ناجح',
+        'login_failure': 'محاولة دخول فاشلة',
         'class_create': 'إضافة فصل',
+        'class_update': 'تعديل فصل',
+        'class_delete': 'حذف فصل',
+        'class_reorder': 'إعادة ترتيب فصل',
         'grade_create': 'إضافة صف',
+        'grade_update': 'تعديل صف',
+        'grade_delete': 'حذف صف',
+        'grade_reorder': 'إعادة ترتيب صف',
       }[action] ??
       action;
+
+  static Future<void> _showDetails(
+    BuildContext context,
+    Map<String, Object?> row,
+  ) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(_label(row['action'] as String)),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SelectableText('المعرف: ${row['entity_id'] ?? '—'}'),
+            const SizedBox(height: 12),
+            const Text(
+              'القيمة السابقة',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            SelectableText('${row['old_value'] ?? '—'}'),
+            const SizedBox(height: 12),
+            const Text(
+              'القيمة الجديدة',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            SelectableText('${row['new_value'] ?? '—'}'),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إغلاق'),
+        ),
+      ],
+    ),
+  );
 }

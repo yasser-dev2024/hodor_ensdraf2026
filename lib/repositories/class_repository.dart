@@ -50,6 +50,7 @@ class ClassRepository {
   }
 
   Future<String> addGrade(String name, {required String userId}) async {
+    await _requireManager(userId);
     final id = _uuid.v4();
     final count =
         (await _database.db.rawQuery(
@@ -76,6 +77,7 @@ class ClassRepository {
     String name, {
     required String userId,
   }) async {
+    await _requireManager(userId);
     final id = _uuid.v4();
     final count =
         (await _database.db.rawQuery(
@@ -138,11 +140,25 @@ class ClassRepository {
   }
 
   Future<void> deleteClass(String id, {required String userId}) async {
+    await _requireManager(userId);
     await _database.db.transaction((txn) async {
+      final current = await txn.query(
+        'classes',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
       await txn.delete('classes', where: 'id = ?', whereArgs: [id]);
       await txn.insert(
         'audit_logs',
-        _audit('class_delete', 'class', id, userId, null),
+        _audit(
+          'class_delete',
+          'class',
+          id,
+          userId,
+          null,
+          oldValue: current.isEmpty ? null : current.first,
+        ),
       );
     });
   }
@@ -152,7 +168,15 @@ class ClassRepository {
     String name, {
     required String userId,
   }) async {
+    await _requireManager(userId);
     await _database.db.transaction((txn) async {
+      final current = await txn.query(
+        'grades',
+        columns: ['name'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
       await txn.update(
         'grades',
         {'name': name.trim()},
@@ -161,7 +185,14 @@ class ClassRepository {
       );
       await txn.insert(
         'audit_logs',
-        _audit('grade_update', 'grade', id, userId, {'name': name.trim()}),
+        _audit(
+          'grade_update',
+          'grade',
+          id,
+          userId,
+          {'name': name.trim()},
+          oldValue: current.isEmpty ? null : current.first,
+        ),
       );
     });
   }
@@ -171,7 +202,15 @@ class ClassRepository {
     String name, {
     required String userId,
   }) async {
+    await _requireManager(userId);
     await _database.db.transaction((txn) async {
+      final current = await txn.query(
+        'classes',
+        columns: ['name'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
       await txn.update(
         'classes',
         {'name': name.trim()},
@@ -180,53 +219,143 @@ class ClassRepository {
       );
       await txn.insert(
         'audit_logs',
-        _audit('class_update', 'class', id, userId, {'name': name.trim()}),
+        _audit(
+          'class_update',
+          'class',
+          id,
+          userId,
+          {'name': name.trim()},
+          oldValue: current.isEmpty ? null : current.first,
+        ),
       );
     });
   }
 
   Future<void> deleteGrade(String id, {required String userId}) async {
+    await _requireManager(userId);
     await _database.db.transaction((txn) async {
+      final current = await txn.query(
+        'grades',
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
       await txn.delete('grades', where: 'id = ?', whereArgs: [id]);
       await txn.insert(
         'audit_logs',
-        _audit('grade_delete', 'grade', id, userId, null),
+        _audit(
+          'grade_delete',
+          'grade',
+          id,
+          userId,
+          null,
+          oldValue: current.isEmpty ? null : current.first,
+        ),
       );
     });
   }
 
-  Future<void> updateGradeOrder(String id, int sortOrder) => _database.db
-      .update(
+  Future<void> updateGradeOrder(
+    String id,
+    int sortOrder, {
+    required String userId,
+  }) async {
+    await _requireManager(userId);
+    await _database.db.transaction((txn) async {
+      final current = await txn.query(
+        'grades',
+        columns: ['sort_order'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (current.isEmpty || current.first['sort_order'] == sortOrder) return;
+      final oldOrder = current.first['sort_order'];
+      await txn.update(
         'grades',
         {'sort_order': sortOrder},
         where: 'id = ?',
         whereArgs: [id],
-      )
-      .then((_) {});
+      );
+      await txn.insert(
+        'audit_logs',
+        _audit(
+          'grade_reorder',
+          'grade',
+          id,
+          userId,
+          {'sort_order': sortOrder},
+          oldValue: {'sort_order': oldOrder},
+        ),
+      );
+    });
+  }
 
-  Future<void> updateClassOrder(String id, int sortOrder) => _database.db
-      .update(
+  Future<void> updateClassOrder(
+    String id,
+    int sortOrder, {
+    required String userId,
+  }) async {
+    await _requireManager(userId);
+    await _database.db.transaction((txn) async {
+      final current = await txn.query(
+        'classes',
+        columns: ['sort_order'],
+        where: 'id = ?',
+        whereArgs: [id],
+        limit: 1,
+      );
+      if (current.isEmpty || current.first['sort_order'] == sortOrder) return;
+      final oldOrder = current.first['sort_order'];
+      await txn.update(
         'classes',
         {'sort_order': sortOrder},
         where: 'id = ?',
         whereArgs: [id],
-      )
-      .then((_) {});
+      );
+      await txn.insert(
+        'audit_logs',
+        _audit(
+          'class_reorder',
+          'class',
+          id,
+          userId,
+          {'sort_order': sortOrder},
+          oldValue: {'sort_order': oldOrder},
+        ),
+      );
+    });
+  }
 
   static Map<String, Object?> _audit(
     String action,
     String type,
     String id,
     String userId,
-    Object? value,
-  ) => {
+    Object? value, {
+    Object? oldValue,
+  }) => {
     'action': action,
     'entity_type': type,
     'entity_id': id,
     'user_id': userId,
     'occurred_at': DateTime.now().toUtc().toIso8601String(),
+    'old_value': oldValue == null ? null : jsonEncode(oldValue),
     'new_value': value == null ? null : jsonEncode(value),
   };
+
+  Future<void> _requireManager(String userId) async {
+    final rows = await _database.db.query(
+      'users',
+      columns: const ['role'],
+      where: 'id = ? AND active = 1',
+      whereArgs: [userId],
+      limit: 1,
+    );
+    if (rows.isEmpty || rows.first['role'] != 'manager') {
+      throw StateError('هذه العملية متاحة للمدير فقط.');
+    }
+  }
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

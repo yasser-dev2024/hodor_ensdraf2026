@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
+import '../../models/period_report.dart';
 
 class DailyReportScreen extends ConsumerStatefulWidget {
   const DailyReportScreen({required this.date, super.key});
@@ -35,14 +36,37 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
       appBar: AppBar(title: const Text('التقرير اليومي')),
       body:
           FutureBuilder<
-            (DailySummary, List<AttendanceRecord>, List<Map<String, Object?>>)
+            (
+              DailySummary,
+              List<AttendanceRecord>,
+              List<Map<String, Object?>>,
+              bool,
+            )
           >(
             future: _load(repository),
             builder: (context, snapshot) {
+              if (snapshot.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(28),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text('تعذر تحميل التقرير. لم تُحذف أي بيانات.'),
+                        TextButton.icon(
+                          onPressed: () => setState(() {}),
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('إعادة المحاولة'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              }
               if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
-              final (summary, records, unregistered) = snapshot.data!;
+              final (summary, records, unregistered, isClosed) = snapshot.data!;
               return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 28),
                 children: [
@@ -107,6 +131,27 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
                     ),
                   ),
                   const SizedBox(height: 13),
+                  if (isClosed)
+                    Container(
+                      padding: const EdgeInsets.all(13),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF5E4),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFF3D49B)),
+                      ),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.lock_rounded, color: AppColors.excused),
+                          SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              'هذا اليوم مغلق ومحمي من التعديل. يمكن للمدير إعادة فتحه، وتسجل العملية في سجل التدقيق.',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (isClosed) const SizedBox(height: 13),
                   if (unregistered.isNotEmpty)
                     Card(
                       child: ExpansionTile(
@@ -138,38 +183,53 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
                       ),
                     ),
                   const SizedBox(height: 13),
-                  Wrap(
-                    spacing: 9,
-                    runSpacing: 9,
-                    children: [
-                      FilledButton.tonalIcon(
-                        onPressed: _busy
-                            ? null
-                            : () => _sharePdf(summary, records),
-                        icon: const Icon(Icons.picture_as_pdf_outlined),
-                        label: const Text('PDF ومشاركة'),
-                      ),
-                      FilledButton.tonalIcon(
-                        onPressed: _busy ? null : () => _shareExcel(records),
-                        icon: const Icon(Icons.table_chart_outlined),
-                        label: const Text('Excel'),
-                      ),
-                      OutlinedButton.icon(
-                        onPressed: _busy ? null : () => _whatsApp(summary),
-                        icon: const Icon(Icons.send_rounded),
-                        label: const Text('إرسال عبر واتساب'),
-                      ),
-                      if (user.role.canManage &&
-                          DateUtils.isSameDay(widget.date, DateTime.now()))
-                        OutlinedButton.icon(
-                          onPressed: _busy
-                              ? null
-                              : () => _closeDay(unregistered.length),
-                          icon: const Icon(Icons.lock_clock_outlined),
-                          label: const Text('إغلاق حضور اليوم'),
-                        ),
-                    ],
+                  _DailyReportAction(
+                    color: const Color(0xFFB3261E),
+                    icon: Icons.picture_as_pdf_rounded,
+                    title: 'مشاركة التقرير بصيغة PDF',
+                    subtitle: 'واتساب أو البريد أو الطباعة أو أي تطبيق مشاركة',
+                    onTap: _busy ? null : () => _sharePdf(summary, records),
                   ),
+                  const SizedBox(height: 9),
+                  _DailyReportAction(
+                    color: const Color(0xFF18794E),
+                    icon: Icons.table_chart_rounded,
+                    title: 'مشاركة التقرير بصيغة Excel',
+                    subtitle: 'ملف جدولي تفصيلي قابل للفتح والحفظ',
+                    onTap: _busy ? null : () => _shareExcel(records),
+                  ),
+                  const SizedBox(height: 9),
+                  _DailyReportAction(
+                    color: const Color(0xFF128C4A),
+                    icon: Icons.send_rounded,
+                    title: 'إرسال التقرير إلى وكيل شؤون الطلاب',
+                    subtitle: 'يستخدم وسيلة الإرسال الافتراضية من الإعدادات',
+                    onTap: _busy ? null : () => _sendToAgent(summary, records),
+                  ),
+                  if (user.role.canManage && isClosed) ...[
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _busy ? null : _reopenDay,
+                      icon: const Icon(Icons.lock_open_rounded),
+                      label: const Text('إعادة فتح اليوم'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(50),
+                      ),
+                    ),
+                  ] else if (user.role.canManage &&
+                      DateUtils.isSameDay(widget.date, DateTime.now())) ...[
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _busy
+                          ? null
+                          : () => _closeDay(unregistered.length),
+                      icon: const Icon(Icons.lock_clock_outlined),
+                      label: const Text('إغلاق حضور اليوم'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(50),
+                      ),
+                    ),
+                  ],
                   const SizedBox(height: 22),
                   const Text(
                     'السجلات',
@@ -231,7 +291,9 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
     );
   }
 
-  Future<(DailySummary, List<AttendanceRecord>, List<Map<String, Object?>>)>
+  Future<
+    (DailySummary, List<AttendanceRecord>, List<Map<String, Object?>>, bool)
+  >
   _load(repository) async {
     final summary = await repository.summary(date: _dateKey) as DailySummary;
     final records =
@@ -239,7 +301,8 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
     final unregistered =
         await repository.unregistered(date: _dateKey)
             as List<Map<String, Object?>>;
-    return (summary, records, unregistered);
+    final isClosed = await repository.isDayClosed(_dateKey) as bool;
+    return (summary, records, unregistered, isClosed);
   }
 
   Future<void> _sharePdf(
@@ -258,6 +321,21 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
             records: records,
             schoolName: school,
           );
+      final autoArchive =
+          await ref.read(settingsRepositoryProvider).get('auto_archive_pdf') !=
+          'false';
+      if (autoArchive) {
+        await ref
+            .read(reportRepositoryProvider)
+            .archiveFile(
+              source: file,
+              reportType: 'daily',
+              periodStart: widget.date,
+              periodEnd: widget.date,
+              scope: const ReportScope.school(),
+              userId: ref.read(currentUserProvider)!.id,
+            );
+      }
       await SharePlus.instance.share(
         ShareParams(
           subject: 'تقرير الحضور الصباحي $_dateKey',
@@ -282,8 +360,15 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
     });
   }
 
-  Future<void> _whatsApp(DailySummary summary) async {
+  Future<void> _sendToAgent(
+    DailySummary summary,
+    List<AttendanceRecord> records,
+  ) async {
     final settings = await ref.read(settingsRepositoryProvider).getAll();
+    if (settings['agent_send_method'] == 'share') {
+      await _sharePdf(summary, records);
+      return;
+    }
     final phone = (settings['agent_phone'] ?? '').replaceAll(RegExp(r'\D'), '');
     if (phone.isEmpty) {
       if (mounted) {
@@ -295,8 +380,15 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
       }
       return;
     }
-    final text =
-        'تقرير الغياب الصباحي\nالتاريخ: $_dateKey\nإجمالي الطلاب: ${summary.totalStudents}\nالحاضرون: ${summary.present}\nالغائبون: ${summary.absent}\nالمستأذنون: ${summary.excused}\n\nيرجى إرفاق التقرير التفصيلي عند الحاجة.';
+    final template =
+        settings['whatsapp_template'] ??
+        'تقرير الغياب الصباحي\nالتاريخ: {date}\nإجمالي الطلاب: {total}\nالحاضرون: {present}\nالغائبون: {absent}\nالمستأذنون: {excused}\n\nيرجى إرفاق التقرير التفصيلي عند الحاجة.';
+    final text = template
+        .replaceAll('{date}', _dateKey)
+        .replaceAll('{total}', '${summary.totalStudents}')
+        .replaceAll('{present}', '${summary.present}')
+        .replaceAll('{absent}', '${summary.absent}')
+        .replaceAll('{excused}', '${summary.excused}');
     final uri = Uri.https('wa.me', '/$phone', {'text': text});
     if (!await launchUrl(uri, mode: LaunchMode.externalApplication) &&
         mounted) {
@@ -307,6 +399,12 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
   }
 
   Future<void> _closeDay(int remaining) async {
+    final autoAbsent =
+        await ref
+            .read(settingsRepositoryProvider)
+            .get('auto_absent_on_close') ==
+        'true';
+    if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -314,6 +412,8 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
         content: Text(
           remaining == 0
               ? 'سيتم حفظ لقطة نهائية للتقرير ومنع التعديل العادي.'
+              : autoAbsent
+              ? 'لا يزال هناك $remaining طالبًا دون حالة. إعداد الغياب التلقائي مفعل؛ سيُسجلون غائبين ثم تُحفظ اللقطة. هل تريد الإغلاق؟'
               : 'لا يزال هناك $remaining طالبًا دون حالة. سيتم حفظ التقرير كما هو ولن يُعتبروا غائبين تلقائيًا. هل تريد الإغلاق؟',
         ),
         actions: [
@@ -332,11 +432,49 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
     await _run(() async {
       await ref
           .read(attendanceRepositoryProvider)
-          .closeDay(userId: ref.read(currentUserProvider)!.id, date: _dateKey);
+          .closeDay(
+            userId: ref.read(currentUserProvider)!.id,
+            date: _dateKey,
+            markUnregisteredAbsent: autoAbsent,
+          );
       refreshData(ref);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم إغلاق التقرير وحفظ لقطة اليوم.')),
+        );
+      }
+    });
+  }
+
+  Future<void> _reopenDay() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('إعادة فتح اليوم'),
+        content: const Text(
+          'سيُسمح بالتعديل مرة أخرى، وستُسجل العملية باسمك وتوقيتها في سجل التدقيق. هل تريد المتابعة؟',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('إعادة الفتح'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _run(() async {
+      await ref
+          .read(attendanceRepositoryProvider)
+          .reopenDay(userId: ref.read(currentUserProvider)!.id, date: _dateKey);
+      refreshData(ref);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تمت إعادة فتح اليوم وتسجيل العملية.')),
         );
       }
     });
@@ -367,6 +505,81 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
     AttendanceStatus.absent => Icons.close_rounded,
     AttendanceStatus.excused => Icons.exit_to_app_rounded,
   };
+}
+
+class _DailyReportAction extends StatelessWidget {
+  const _DailyReportAction({
+    required this.color,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final Color color;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: onTap == null ? Colors.grey.shade200 : color.withValues(alpha: .08),
+    borderRadius: BorderRadius.circular(17),
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(17),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(13),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(17),
+          border: Border.all(
+            color: onTap == null
+                ? Colors.grey.shade300
+                : color.withValues(alpha: .3),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: onTap == null ? Colors.grey.shade300 : color,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, color: Colors.white),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w900,
+                      color: AppColors.navy,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      color: Colors.blueGrey,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_left_rounded, color: color),
+          ],
+        ),
+      ),
+    ),
+  );
 }
 
 class _DailyStat extends StatelessWidget {

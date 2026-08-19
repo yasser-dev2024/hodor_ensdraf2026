@@ -1,7 +1,12 @@
+import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:excel/excel.dart';
 import 'package:excel2003/excel2003.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../data/app_database.dart';
@@ -57,13 +62,17 @@ class StudentImportService {
   Future<ImportWorkbook> readFile({
     required String fileName,
     required Uint8List bytes,
+    String? sourcePath,
   }) async {
     final extension = fileName.split('.').last.toLowerCase();
     try {
       if (extension == 'xlsx') return _readXlsx(fileName, bytes);
       if (extension == 'xls') return _readXls(fileName, bytes);
+      if (extension == 'pdf') {
+        return _readPdf(fileName, bytes, sourcePath: sourcePath);
+      }
       throw const FormatException(
-        'نوع الملف غير مدعوم. استخدم ملف Excel بصيغة XLSX أو XLS.',
+        'نوع الملف غير مدعوم. استخدم XLSX أو XLS أو PDF نصيًا.',
       );
     } on FormatException {
       rethrow;
@@ -72,6 +81,71 @@ class StudentImportService {
         'تعذر قراءة الملف. يرجى التأكد من أن الملف صالح وغير محمي بكلمة مرور.',
       );
     }
+  }
+
+  Future<ImportWorkbook> _readPdf(
+    String fileName,
+    Uint8List bytes, {
+    String? sourcePath,
+  }) async {
+    File? temporaryFile;
+    try {
+      var path = sourcePath;
+      if (path == null || path.trim().isEmpty || !await File(path).exists()) {
+        final directory = await getTemporaryDirectory();
+        temporaryFile = File(
+          p.join(
+            directory.path,
+            'student_import_${DateTime.now().microsecondsSinceEpoch}.pdf',
+          ),
+        );
+        await temporaryFile.writeAsBytes(bytes, flush: true);
+        path = temporaryFile.path;
+      }
+      final text = await ReadPdfText.getPDFtext(path);
+      return workbookFromPdfText(fileName, text);
+    } catch (error) {
+      if (error is FormatException) rethrow;
+      throw const FormatException(
+        'تعذر استخراج نص PDF. إذا كان الملف صورة ممسوحة فحوّله إلى Excel أو PDF نصي.',
+      );
+    } finally {
+      if (temporaryFile != null && await temporaryFile.exists()) {
+        await temporaryFile.delete();
+      }
+    }
+  }
+
+  ImportWorkbook workbookFromPdfText(String fileName, String text) {
+    final cleaned = text.replaceAll('\u0000', '').trim();
+    if (cleaned.length < 20 ||
+        !RegExp(r'[A-Za-zء-ي]').hasMatch(cleaned) ||
+        !RegExp(r'\d').hasMatch(cleaned)) {
+      throw const FormatException(
+        'ملف PDF لا يحتوي على جدول نصي قابل للاستخراج. إذا كان صورة ممسوحة فحوّله إلى Excel أو PDF نصي.',
+      );
+    }
+    final rows = cleaned
+        .split(RegExp(r'\r?\n'))
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .map(
+          (line) => line
+              .split(RegExp(r'\s*\|\s*|\t+|\s{2,}'))
+              .map((cell) => cell.trim())
+              .toList(),
+        )
+        .toList();
+    if (rows.isEmpty || rows.every((row) => row.length < 2)) {
+      throw const FormatException(
+        'تم العثور على نص داخل PDF لكن لم يُكتشف جدول واضح. حوّل الملف إلى Excel للحفاظ على الأعمدة.',
+      );
+    }
+    return ImportWorkbook(
+      fileName: fileName,
+      sourceType: 'pdf',
+      sheets: [ImportSheetData(name: 'PDF', rows: rows)],
+    );
   }
 
   ImportWorkbook _readXlsx(String fileName, Uint8List bytes) {
@@ -139,6 +213,20 @@ class StudentImportService {
     }
     final headers = sheet.rows[headerIndex];
     final mapping = manualMapping ?? _mapHeaders(headers, savedMappings);
+    final nationalIdColumn = mapping.entries
+        .where((entry) => entry.value == ImportField.nationalId)
+        .map((entry) => entry.key)
+        .firstOrNull;
+    final existingNationalIds = await _students.existingNationalIds([
+      if (nationalIdColumn != null)
+        for (
+          var rowIndex = headerIndex + 1;
+          rowIndex < sheet.rows.length;
+          rowIndex++
+        )
+          if (nationalIdColumn < sheet.rows[rowIndex].length)
+            sheet.rows[rowIndex][nationalIdColumn],
+    ]);
     final seenIds = <String>{};
     final candidates = <ImportCandidate>[];
     for (
@@ -162,12 +250,14 @@ class StudentImportService {
       );
       final errors = <String>[];
       if (name.length < 2) errors.add('اسم الطالب مفقود أو قصير');
-      if (normalizedId.length < 4) errors.add('السجل المدني مفقود أو غير صالح');
+      if (normalizedId.length != 10) {
+        errors.add('السجل المدني يجب أن يتكون من 10 أرقام');
+      }
       final duplicateInFile =
           normalizedId.isNotEmpty && !seenIds.add(normalizedId);
       final duplicateInDatabase =
-          normalizedId.length >= 4 &&
-          await _students.nationalIdExists(normalizedId);
+          normalizedId.length == 10 &&
+          existingNationalIds.contains(normalizedId);
       candidates.add(
         ImportCandidate(
           sourceRow: rowIndex + 1,
@@ -196,23 +286,27 @@ class StudentImportService {
     ImportPreview preview, {
     required String userId,
   }) async {
-    var imported = 0;
-    var duplicates = 0;
-    var errors = 0;
+    var duplicates = preview.candidates
+        .where((row) => row.duplicateInFile || row.duplicateInDatabase)
+        .length;
+    final errors = preview.candidates
+        .where(
+          (row) =>
+              !row.duplicateInFile &&
+              !row.duplicateInDatabase &&
+              row.errors.isNotEmpty,
+        )
+        .length;
     await _saveMappings(preview.headers, preview.columnMapping);
-    for (final candidate in preview.candidates) {
-      if (candidate.duplicateInFile || candidate.duplicateInDatabase) {
-        duplicates++;
-        continue;
-      }
-      if (candidate.errors.isNotEmpty) {
-        errors++;
-        continue;
-      }
-      try {
-        final values = candidate.values;
-        final gradeName = values[ImportField.grade]?.trim() ?? '';
-        final className = values[ImportField.schoolClass]?.trim() ?? '';
+    final resolvedScopes = <String, (String?, String?)>{};
+    final drafts = <StudentCreateDraft>[];
+    for (final candidate in preview.candidates.where((row) => row.canImport)) {
+      final values = candidate.values;
+      final gradeName = values[ImportField.grade]?.trim() ?? '';
+      final className = values[ImportField.schoolClass]?.trim() ?? '';
+      final scopeKey = '$gradeName\u0000$className';
+      var scope = resolvedScopes[scopeKey];
+      if (scope == null) {
         String? gradeId;
         String? classId;
         if (gradeName.isNotEmpty && className.isNotEmpty) {
@@ -226,29 +320,35 @@ class StudentImportService {
         } else if (gradeName.isNotEmpty) {
           gradeId = (await _classes.ensureGrade(gradeName, userId: userId)).id;
         }
-        await _students.create(
+        scope = (gradeId, classId);
+        resolvedScopes[scopeKey] = scope;
+      }
+      drafts.add(
+        StudentCreateDraft(
           name: values[ImportField.studentName]!,
           nationalId: values[ImportField.nationalId]!,
           stage: values[ImportField.stage] ?? '',
-          gradeId: gradeId,
-          classId: classId,
+          gradeId: scope.$1,
+          classId: scope.$2,
           academicNumber: values[ImportField.academicNumber],
-          userId: userId,
-        );
-        imported++;
-      } on DuplicateStudentException {
-        duplicates++;
-      } catch (_) {
-        errors++;
-      }
+        ),
+      );
     }
+    final batch = await _students.createBatch(drafts, userId: userId);
+    final imported = batch.created;
+    duplicates += batch.duplicates;
     await _database.db.insert('audit_logs', {
-      'action': 'excel_import',
+      'action': 'student_import',
       'entity_type': 'import',
       'user_id': userId,
       'occurred_at': DateTime.now().toUtc().toIso8601String(),
-      'new_value':
-          '{"file":"${preview.workbook.fileName.replaceAll('"', '')}","imported":$imported,"duplicates":$duplicates,"errors":$errors}',
+      'new_value': jsonEncode({
+        'file': p.basename(preview.workbook.fileName),
+        'source_type': preview.workbook.sourceType,
+        'imported': imported,
+        'duplicates': duplicates,
+        'errors': errors,
+      }),
     });
     return ImportResult(
       imported: imported,

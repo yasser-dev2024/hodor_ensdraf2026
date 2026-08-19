@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
@@ -143,6 +144,12 @@ class _StudentFormScreenState extends ConsumerState<StudentFormScreen> {
                       TextFormField(
                         controller: _nationalId,
                         keyboardType: TextInputType.number,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'[0-9٠-٩]'),
+                          ),
+                          LengthLimitingTextInputFormatter(10),
+                        ],
                         textInputAction: TextInputAction.next,
                         decoration: const InputDecoration(
                           labelText: 'السجل المدني *',
@@ -152,8 +159,8 @@ class _StudentFormScreenState extends ConsumerState<StudentFormScreen> {
                         validator: (value) {
                           final digits =
                               value?.replaceAll(RegExp(r'[^0-9٠-٩]'), '') ?? '';
-                          return digits.length < 4
-                              ? 'أدخل سجلًا مدنيًا صالحًا'
+                          return digits.length != 10
+                              ? 'السجل المدني يجب أن يتكون من 10 أرقام'
                               : null;
                         },
                       ),

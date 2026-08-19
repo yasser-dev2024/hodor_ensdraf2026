@@ -65,7 +65,11 @@ class _ClassManagementScreenState extends ConsumerState<ClassManagementScreen> {
               final moved = items.removeAt(oldIndex);
               items.insert(newIndex, moved);
               for (var i = 0; i < items.length; i++) {
-                await repository.updateGradeOrder(items[i].id, i);
+                await repository.updateGradeOrder(
+                  items[i].id,
+                  i,
+                  userId: ref.read(currentUserProvider)!.id,
+                );
               }
               setState(() => _revision++);
             },
@@ -136,32 +140,67 @@ class _ClassManagementScreenState extends ConsumerState<ClassManagementScreen> {
                           padding: EdgeInsets.all(18),
                           child: Text('لا توجد فصول في هذا الصف.'),
                         ),
-                      for (final schoolClass in gradeClasses)
-                        ListTile(
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 28,
-                          ),
-                          leading: const Icon(
-                            Icons.meeting_room_outlined,
-                            color: AppColors.teal,
-                          ),
-                          title: Text(schoolClass.name),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'rename') _renameClass(schoolClass);
-                              if (value == 'delete') _deleteClass(schoolClass);
-                            },
-                            itemBuilder: (_) => const [
-                              PopupMenuItem(
-                                value: 'rename',
-                                child: Text('تعديل'),
+                      if (gradeClasses.isNotEmpty)
+                        ReorderableListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          buildDefaultDragHandles: false,
+                          itemCount: gradeClasses.length,
+                          onReorder: (oldIndex, newIndex) async {
+                            if (newIndex > oldIndex) newIndex--;
+                            final items = [...gradeClasses];
+                            final moved = items.removeAt(oldIndex);
+                            items.insert(newIndex, moved);
+                            for (var i = 0; i < items.length; i++) {
+                              await repository.updateClassOrder(
+                                items[i].id,
+                                i,
+                                userId: ref.read(currentUserProvider)!.id,
+                              );
+                            }
+                            if (mounted) setState(() => _revision++);
+                          },
+                          itemBuilder: (context, classIndex) {
+                            final schoolClass = gradeClasses[classIndex];
+                            return ListTile(
+                              key: ValueKey(schoolClass.id),
+                              contentPadding: const EdgeInsetsDirectional.only(
+                                start: 28,
+                                end: 12,
                               ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text('حذف'),
+                              leading: ReorderableDragStartListener(
+                                index: classIndex,
+                                child: const Icon(
+                                  Icons.drag_indicator_rounded,
+                                  color: Colors.blueGrey,
+                                ),
                               ),
-                            ],
-                          ),
+                              title: Text(schoolClass.name),
+                              subtitle: const Text(
+                                'اسحب المقبض لإعادة الترتيب',
+                              ),
+                              trailing: PopupMenuButton<String>(
+                                onSelected: (value) {
+                                  if (value == 'rename') {
+                                    _renameClass(schoolClass);
+                                  }
+                                  if (value == 'delete') {
+                                    _deleteClass(schoolClass);
+                                  }
+                                },
+                                itemBuilder: (_) => const [
+                                  PopupMenuItem(
+                                    value: 'rename',
+                                    child: Text('تعديل'),
+                                  ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('حذف'),
+                                  ),
+                                ],
+                              ),
+                            );
+                          },
                         ),
                       ListTile(
                         contentPadding: const EdgeInsets.symmetric(

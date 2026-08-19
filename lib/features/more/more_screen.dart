@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import 'audit_log_screen.dart';
+import 'batch_student_management_screen.dart';
 import 'backup_screen.dart';
 import 'class_management_screen.dart';
 import 'import_screen.dart';
@@ -30,7 +31,9 @@ class MoreScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 6),
           Text(
-            '${user.name} • ${user.role.label}',
+            user.role.canManage
+                ? 'إدارة التطبيق والبيانات المحلية'
+                : 'الموظف الحالي: ${user.name}',
             style: TextStyle(color: Colors.blueGrey.shade600),
           ),
           const SizedBox(height: 20),
@@ -51,6 +54,13 @@ class MoreScreen extends ConsumerWidget {
               onTap: () => _open(context, const ClassManagementScreen()),
             ),
             _MoreTile(
+              icon: Icons.upgrade_rounded,
+              color: AppColors.present,
+              title: 'الترحيل السنوي وإدارة الدفعات',
+              subtitle: 'ترحيل صف كامل أو تعطيل صف/مرحلة دون إعادة استيراد',
+              onTap: () => _open(context, const BatchStudentManagementScreen()),
+            ),
+            _MoreTile(
               icon: Icons.calendar_month_outlined,
               color: AppColors.excused,
               title: 'أيام الدراسة والتقويم',
@@ -59,13 +69,6 @@ class MoreScreen extends ConsumerWidget {
             ),
             const SizedBox(height: 17),
             const _SectionTitle('الأمان والإدارة'),
-            _MoreTile(
-              icon: Icons.manage_accounts_outlined,
-              color: AppColors.blue,
-              title: 'المستخدمون والصلاحيات',
-              subtitle: 'مدير، مسؤول حضور، وكيل طلاب',
-              onTap: () => _open(context, const UsersScreen()),
-            ),
             _MoreTile(
               icon: Icons.history_rounded,
               color: AppColors.navy,
@@ -92,26 +95,26 @@ class MoreScreen extends ConsumerWidget {
                 ? () => _open(context, const SettingsScreen())
                 : null,
           ),
-          const SizedBox(height: 16),
-          Card(
-            child: ListTile(
-              leading: const Icon(
-                Icons.logout_rounded,
-                color: AppColors.absent,
-              ),
-              title: const Text(
-                'تسجيل الخروج',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  color: AppColors.absent,
-                ),
-              ),
-              onTap: () => ref.read(currentUserProvider.notifier).state = null,
-            ),
+          _MoreTile(
+            icon: Icons.badge_outlined,
+            color: AppColors.excused,
+            title: 'المستخدمون والصلاحيات',
+            subtitle: 'مدير ومسؤول حضور ووكيل شؤون الطلاب',
+            onTap: user.role.canManage
+                ? () => _open(context, const UsersScreen())
+                : null,
+          ),
+          _MoreTile(
+            icon: Icons.logout_rounded,
+            color: AppColors.absent,
+            title: 'تسجيل الخروج',
+            subtitle:
+                'يتطلب الدخول مجددًا باستخدام PIN أو كلمة المرور أو البصمة',
+            onTap: () => ref.read(currentUserProvider.notifier).state = null,
           ),
           const SizedBox(height: 18),
           const Text(
-            'الإصدار 1.0.0 • يعمل محليًا بدون إنترنت',
+            'الإصدار 1.1.0 • يعمل محليًا بدون إنترنت',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 11, color: Colors.blueGrey),
           ),

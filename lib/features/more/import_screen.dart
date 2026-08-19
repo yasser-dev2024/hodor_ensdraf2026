@@ -41,7 +41,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                   ),
                   const SizedBox(height: 10),
                   const Text(
-                    'استيراد ذكي من Excel',
+                    'استيراد ذكي للطلاب',
                     style: TextStyle(
                       fontSize: 19,
                       fontWeight: FontWeight.w900,
@@ -50,7 +50,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'يدعم XLSX وXLS القديم. يكتشف صف العناوين حتى مع وجود شعار أو أسطر قبله.',
+                    'يدعم XLSX وXLS وPDF النصي. ملف PDF المصوّر يحتاج إلى تحويل إلى Excel أو PDF نصي.',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.55, color: Colors.blueGrey),
                   ),
@@ -286,7 +286,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
     try {
       final result = await fp.FilePicker.pickFiles(
         type: fp.FileType.custom,
-        allowedExtensions: const ['xlsx', 'xls'],
+        allowedExtensions: const ['xlsx', 'xls', 'pdf'],
         withData: true,
       );
       if (result == null) return;
@@ -300,7 +300,11 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
       }
       final workbook = await ref
           .read(importServiceProvider)
-          .readFile(fileName: picked.name, bytes: bytes);
+          .readFile(
+            fileName: picked.name,
+            bytes: bytes,
+            sourcePath: picked.path,
+          );
       _workbook = workbook;
       _preview = await ref.read(importServiceProvider).preview(workbook);
     } catch (error) {
