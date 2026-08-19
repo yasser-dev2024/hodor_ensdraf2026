@@ -24,8 +24,8 @@
 - تحديث Release فوق النسخة السابقة حافظ على حساب المستخدم، ثم نجح Cold Start وظهرت شاشة الدخول دون فراغ؛ لوحة المفاتيح أبلغت `mIsInputViewShown=true` عند لمس كلمة المرور.
 - سجل الجهاز: لا FATAL EXCEPTION ولا E/flutter ولا LocaleDataException ولا SQLiteException.
 - `index.html`: الرابط والحجم وSHA-256 مطابقون للحزمة النهائية.
-- التحقق المنشور: سيعاد تنزيل الحزمة الجديدة من زر GitHub Pages ومطابقة بصمتها بعد دفع هذا التحديث.
-- GitHub: ملفات Gradle Wrapper أصبحت متتبعة، وCI يبني Android Debug فعليًا؛ مسار keystore في Release Workflow مصحح.
+- التحقق المنشور: اكتمل تنزيل 96,704,705 بايت من زر GitHub Pages ذي cache-buster، وطابقت البصمة `92685B185EA4E91C32E6B1E52CFEEFBE6EFB14116DEBF842F7B4EF9CDCC12A7C` الحزمة المثبتة.
+- GitHub: رُفع commit `68b2faf` إلى `main`، ونجح Pages deployment وCI بالكامل، بما فيه التحليل والاختبارات وبناء Android Debug على خادم مستقل. ملفات Gradle Wrapper متتبعة ومسار keystore في Release Workflow مصحح.
 
 ## اعتمادات خارجية لا يمكن تنفيذها من Windows وحده
 
