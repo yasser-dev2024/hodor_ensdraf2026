@@ -21,11 +21,13 @@ class ScannerScreen extends ConsumerStatefulWidget {
     required this.attendanceDate,
     this.classId,
     this.classLabel,
+    this.quickAbsenceMode = false,
     super.key,
   });
   final String attendanceDate;
   final String? classId;
   final String? classLabel;
+  final bool quickAbsenceMode;
 
   @override
   ConsumerState<ScannerScreen> createState() => _ScannerScreenState();
@@ -36,6 +38,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
   Student? _student;
   bool _handling = false;
   bool _saving = false;
+  bool _completingClass = false;
   String? _lastToken;
   DateTime? _lastScanAt;
   double _zoom = 0;
@@ -135,7 +138,33 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                               classId: widget.classId!,
                               classLabel: widget.classLabel ?? '',
                               attendanceDate: widget.attendanceDate,
+                              quickAbsenceMode: widget.quickAbsenceMode,
                             ),
+                          if (widget.quickAbsenceMode) ...[
+                            const SizedBox(height: 8),
+                            FilledButton.icon(
+                              key: const ValueKey('radar_complete_class'),
+                              onPressed: _completingClass
+                                  ? null
+                                  : _completeRadarClass,
+                              icon: _completingClass
+                                  ? const SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Colors.white,
+                                      ),
+                                    )
+                                  : const Icon(Icons.task_alt_rounded),
+                              label: const Text(
+                                'إغلاق الفصل واحتساب البقية حضورًا',
+                              ),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.present,
+                                minimumSize: const Size.fromHeight(48),
+                              ),
+                            ),
+                          ],
                           SliderTheme(
                             data: SliderTheme.of(context).copyWith(
                               activeTrackColor: Colors.white,
@@ -155,10 +184,12 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                               },
                             ),
                           ),
-                          const Text(
-                            'ضع رمز الطالب داخل الإطار',
+                          Text(
+                            widget.quickAbsenceMode
+                                ? 'امسح رمز الغائب أو المستأذن فقط'
+                                : 'ضع رمز الطالب داخل الإطار',
                             textAlign: TextAlign.center,
-                            style: TextStyle(
+                            style: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.w800,
                             ),
@@ -179,6 +210,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                       .role
                       .canViewSensitiveStudentData,
                   saving: _saving,
+                  quickAbsenceMode: widget.quickAbsenceMode,
                   onCancel: _resume,
                   onStatus: _recordStatus,
                 ),
@@ -601,6 +633,91 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     return result;
   }
 
+  Future<void> _completeRadarClass() async {
+    final classId = widget.classId;
+    if (!widget.quickAbsenceMode ||
+        classId == null ||
+        _handling ||
+        _student != null) {
+      return;
+    }
+    _handling = true;
+    await _controller.stop().catchError((Object _) {});
+    try {
+      final repository = ref.read(attendanceRepositoryProvider);
+      final summary = await repository.summary(
+        date: widget.attendanceDate,
+        classId: classId,
+      );
+      final remaining = await repository.unregistered(
+        date: widget.attendanceDate,
+        classId: classId,
+      );
+      if (!mounted) return;
+      if (summary.totalStudents == 0) {
+        throw StateError('لا يوجد طلاب نشطون في هذا الفصل.');
+      }
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          icon: const Icon(Icons.fact_check_rounded, color: AppColors.present),
+          title: Text('إغلاق ${widget.classLabel ?? 'الفصل'}'),
+          content: Text(
+            remaining.isEmpty
+                ? 'جميع طلاب الفصل لديهم حالة مسجلة. سيتم اعتماد الفصل والانتقال إلى الفصل التالي.'
+                : 'تأكد من تسجيل الغائبين والمستأذنين فقط. سيُحتسب بقية طلاب الفصل وعددهم ${remaining.length} حاضرين تلقائيًا، ثم ينتقل الرادار إلى الفصل التالي.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('متابعة الحصر'),
+            ),
+            FilledButton.icon(
+              key: const ValueKey('confirm_radar_complete_class'),
+              onPressed: () => Navigator.pop(context, true),
+              icon: const Icon(Icons.check_rounded),
+              label: const Text('إغلاق والانتقال'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) {
+        await _restartScanner();
+        return;
+      }
+      if (mounted) setState(() => _completingClass = true);
+      final markedPresent = await repository.completeClassWithRemainingPresent(
+        userId: ref.read(currentUserProvider)!.id,
+        date: widget.attendanceDate,
+        classId: classId,
+      );
+      refreshData(ref);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            markedPresent == 0
+                ? 'تم اعتماد ${widget.classLabel ?? 'الفصل'}.'
+                : 'تم اعتماد ${widget.classLabel ?? 'الفصل'} واحتساب $markedPresent حاضرين تلقائيًا.',
+          ),
+          backgroundColor: AppColors.present,
+        ),
+      );
+      Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) {
+        final message = '$error'
+            .replaceFirst('Bad state: ', '')
+            .replaceFirst('StateError: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message), backgroundColor: AppColors.absent),
+        );
+        setState(() => _completingClass = false);
+      }
+      await _restartScanner();
+    }
+  }
+
   Future<void> _resume() async {
     if (mounted) {
       setState(() {
@@ -677,12 +794,14 @@ class _StudentResult extends StatelessWidget {
     required this.student,
     required this.showSensitiveId,
     required this.saving,
+    required this.quickAbsenceMode,
     required this.onCancel,
     required this.onStatus,
   });
   final Student student;
   final bool showSensitiveId;
   final bool saving;
+  final bool quickAbsenceMode;
   final Future<void> Function() onCancel;
   final Future<void> Function(AttendanceStatus) onStatus;
 
@@ -723,6 +842,17 @@ class _StudentResult extends StatelessWidget {
             style: const TextStyle(fontSize: 12, color: Colors.blueGrey),
           ),
           const SizedBox(height: 15),
+          if (quickAbsenceMode) ...[
+            const Text(
+              'وضع الرادار: سجّل الغائب أو المستأذن فقط',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: AppColors.navy,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
           if (saving)
             const Padding(
               padding: EdgeInsets.all(20),
@@ -731,13 +861,15 @@ class _StudentResult extends StatelessWidget {
           else
             Row(
               children: [
-                _StatusButton(
-                  label: 'حاضر',
-                  icon: Icons.check_rounded,
-                  color: AppColors.present,
-                  onTap: () => onStatus(AttendanceStatus.present),
-                ),
-                const SizedBox(width: 8),
+                if (!quickAbsenceMode) ...[
+                  _StatusButton(
+                    label: 'حاضر',
+                    icon: Icons.check_rounded,
+                    color: AppColors.present,
+                    onTap: () => onStatus(AttendanceStatus.present),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 _StatusButton(
                   label: 'غائب',
                   icon: Icons.close_rounded,
@@ -855,10 +987,12 @@ class _ProgressPill extends ConsumerWidget {
     required this.classId,
     required this.classLabel,
     required this.attendanceDate,
+    required this.quickAbsenceMode,
   });
   final String classId;
   final String classLabel;
   final String attendanceDate;
+  final bool quickAbsenceMode;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.read(attendanceRepositoryProvider);
@@ -874,15 +1008,14 @@ class _ProgressPill extends ConsumerWidget {
         final remaining = snapshot.hasData
             ? snapshot.data![1] as List<Map<String, Object?>>
             : const <Map<String, Object?>>[];
-        final visibleNames = remaining
-            .take(2)
-            .map((row) => row['name'] as String)
-            .join('، ');
+        final visibleNames = quickAbsenceMode
+            ? ''
+            : remaining.take(2).map((row) => row['name'] as String).join('، ');
         return Material(
           color: Colors.transparent,
           child: InkWell(
             borderRadius: BorderRadius.circular(22),
-            onTap: remaining.isEmpty
+            onTap: quickAbsenceMode || remaining.isEmpty
                 ? null
                 : () => _showRemaining(context, remaining),
             child: Container(
@@ -899,6 +1032,8 @@ class _ProgressPill extends ConsumerWidget {
                   Text(
                     summary == null
                         ? classLabel
+                        : quickAbsenceMode
+                        ? '$classLabel  •  الغياب ${summary.absent}  •  الاستئذان ${summary.excused}'
                         : '$classLabel  •  تم تسجيل ${summary.registered} من ${summary.totalStudents}  •  المتبقي ${summary.remaining}',
                     textAlign: TextAlign.center,
                     style: const TextStyle(
@@ -907,6 +1042,17 @@ class _ProgressPill extends ConsumerWidget {
                       fontSize: 12,
                     ),
                   ),
+                  if (quickAbsenceMode && summary != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      'سجّل الغائبين فقط • سيُحتسب ${summary.remaining} حضورًا عند الاعتماد',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 10,
+                      ),
+                    ),
+                  ],
                   if (visibleNames.isNotEmpty) ...[
                     const SizedBox(height: 2),
                     Text(

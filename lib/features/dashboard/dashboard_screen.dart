@@ -391,6 +391,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     }
     final date = SchoolDayFormatter.dateOnly(_now);
     final dateKey = SchoolDayFormatter.key(date);
+    var target = item;
     try {
       final day = await ref
           .read(attendanceRepositoryProvider)
@@ -400,18 +401,48 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         await Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => DailyReportScreen(date: date)),
         );
-      } else {
-        await Navigator.of(context).push(
+        return;
+      }
+      while (mounted) {
+        final completed = await Navigator.of(context).push<bool>(
           MaterialPageRoute(
             builder: (_) => ScannerScreen(
               attendanceDate: dateKey,
-              classId: item.classId,
-              classLabel: item.label,
+              classId: target.classId,
+              classLabel: target.label,
+              quickAbsenceMode: true,
             ),
           ),
         );
+        if (!mounted) return;
+        refreshData(ref);
+        if (completed != true) return;
+
+        final latest = await ref
+            .read(dailyPreparationServiceProvider)
+            .load(date);
+        if (!mounted) return;
+        final next = latest.nextIncompleteAfter(target.classId);
+        if (next == null) {
+          final needsReview = latest.classes.any(
+            (value) => value.state == ClassPreparationState.needsReview,
+          );
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                needsReview
+                    ? 'اكتملت الفصول القابلة للتحضير، وتوجد فصول تحتاج مراجعة.'
+                    : '✓ تم اعتماد جميع الفصول لهذا اليوم.',
+              ),
+              backgroundColor: needsReview
+                  ? AppColors.excused
+                  : AppColors.present,
+            ),
+          );
+          return;
+        }
+        target = next;
       }
-      if (mounted) refreshData(ref);
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(

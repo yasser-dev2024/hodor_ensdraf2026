@@ -21,6 +21,9 @@ class DailyPreparationService {
         g.name AS grade_name,
         COUNT(DISTINCT s.id) AS total_students,
         COUNT(DISTINCT CASE WHEN a.id IS NOT NULL THEN s.id END) AS registered_students,
+        COUNT(DISTINCT CASE WHEN a.status = 'present' THEN s.id END) AS present_students,
+        COUNT(DISTINCT CASE WHEN a.status = 'absent' THEN s.id END) AS absent_students,
+        COUNT(DISTINCT CASE WHEN a.status = 'excused' THEN s.id END) AS excused_students,
         COUNT(a.id) AS record_count,
         COUNT(DISTINCT CASE
           WHEN TRIM(s.name) = ''
@@ -78,6 +81,9 @@ class DailyPreparationService {
             className: row['class_name'] as String,
             totalStudents: total,
             registeredStudents: registered,
+            presentStudents: _asInt(row['present_students']),
+            absentStudents: _asInt(row['absent_students']),
+            excusedStudents: _asInt(row['excused_students']),
             state: state,
             completedAt: state == ClassPreparationState.complete
                 ? DateTime.tryParse(row['completed_at'] as String? ?? '')

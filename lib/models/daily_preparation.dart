@@ -11,6 +11,9 @@ class ClassPreparationStatus {
     required this.totalStudents,
     required this.registeredStudents,
     required this.state,
+    this.presentStudents = 0,
+    this.absentStudents = 0,
+    this.excusedStudents = 0,
     this.completedAt,
     this.reviewReason,
   });
@@ -21,6 +24,9 @@ class ClassPreparationStatus {
   final String className;
   final int totalStudents;
   final int registeredStudents;
+  final int presentStudents;
+  final int absentStudents;
+  final int excusedStudents;
   final ClassPreparationState state;
   final DateTime? completedAt;
   final String? reviewReason;
@@ -59,6 +65,17 @@ class DailyPreparationSnapshot {
       completedClasses == totalClasses &&
       summary.remaining == 0 &&
       unassignedStudents == 0;
+
+  ClassPreparationStatus? nextIncompleteAfter(String classId) {
+    if (classes.isEmpty) return null;
+    final currentIndex = classes.indexWhere((item) => item.classId == classId);
+    final start = currentIndex < 0 ? 0 : currentIndex + 1;
+    for (var offset = 0; offset < classes.length; offset++) {
+      final item = classes[(start + offset) % classes.length];
+      if (item.state == ClassPreparationState.incomplete) return item;
+    }
+    return null;
+  }
 }
 
 enum DailyReviewIssueKind {

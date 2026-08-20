@@ -130,8 +130,112 @@ void main() {
     expect(complete.summary.present, 1);
     expect(complete.summary.absent, 1);
     expect(complete.completedAt, finalRecordTime.toUtc());
+    expect(complete.classes.last.absentStudents, 1);
     expect((await preparation.review(now)).isClean, isTrue);
   });
+
+  test(
+    'اعتماد فصل الرادار يحتسب بقية الفصل حضورًا دون لمس الفصول الأخرى',
+    () async {
+      final gradeId = await classes.addGrade('الصف الثالث', userId: managerId);
+      final firstClassId = await classes.addClass(
+        gradeId,
+        '1',
+        userId: managerId,
+      );
+      final secondClassId = await classes.addClass(
+        gradeId,
+        '2',
+        userId: managerId,
+      );
+      final absentStudent = await students.create(
+        name: 'طالب غائب',
+        nationalId: '1066666666',
+        gradeId: gradeId,
+        classId: firstClassId,
+        userId: managerId,
+      );
+      await students.create(
+        name: 'طالب حاضر أول',
+        nationalId: '1077777777',
+        gradeId: gradeId,
+        classId: firstClassId,
+        userId: managerId,
+      );
+      await students.create(
+        name: 'طالب حاضر ثان',
+        nationalId: '1088888888',
+        gradeId: gradeId,
+        classId: firstClassId,
+        userId: managerId,
+      );
+      await students.create(
+        name: 'طالب الفصل التالي',
+        nationalId: '1099999999',
+        gradeId: gradeId,
+        classId: secondClassId,
+        userId: managerId,
+      );
+      final now = DateTime.now();
+      final day = attendance.dayKey(now);
+      await attendance.record(
+        student: absentStudent,
+        status: AttendanceStatus.absent,
+        userId: managerId,
+        attendanceDate: day,
+        at: now,
+      );
+
+      final markedPresent = await attendance.completeClassWithRemainingPresent(
+        userId: managerId,
+        date: day,
+        classId: firstClassId,
+      );
+
+      expect(markedPresent, 2);
+      final firstSummary = await attendance.summary(
+        date: day,
+        classId: firstClassId,
+      );
+      expect(firstSummary.registered, 3);
+      expect(firstSummary.present, 2);
+      expect(firstSummary.absent, 1);
+      expect(
+        await attendance.unregistered(date: day, classId: firstClassId),
+        isEmpty,
+      );
+      expect(
+        await attendance.unregistered(date: day, classId: secondClassId),
+        hasLength(1),
+      );
+      expect(await attendance.isDayClosed(day), isFalse);
+
+      final snapshot = await preparation.load(now);
+      expect(snapshot.classes.first.state, ClassPreparationState.complete);
+      expect(snapshot.classes.first.presentStudents, 2);
+      expect(snapshot.classes.first.absentStudents, 1);
+      expect(snapshot.classes.last.state, ClassPreparationState.incomplete);
+
+      expect(
+        await attendance.completeClassWithRemainingPresent(
+          userId: managerId,
+          date: day,
+          classId: firstClassId,
+        ),
+        0,
+      );
+      expect(
+        await attendance.getDaily(date: day, classId: firstClassId),
+        hasLength(3),
+      );
+      final audits = await database.db.query(
+        'audit_logs',
+        where: 'action = ?',
+        whereArgs: ['attendance_class_complete'],
+      );
+      expect(audits, hasLength(2));
+    },
+  );
 
   test('المراجعة تقرأ فقط وتكشف الطالب بلا فصل ودون حالة', () async {
     final gradeId = await classes.addGrade('الصف الخامس', userId: managerId);

@@ -373,7 +373,7 @@ class _ClassRadar extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           const Text(
-            'اضغط على الفصل لفتح مسار التحضير الحالي الخاص به.',
+            'افتح الفصل، سجّل الغائبين والمستأذنين فقط، ثم اعتمده ليُحتسب الباقون حضورًا وينتقل الرادار للفصل التالي.',
             style: TextStyle(fontSize: 11, color: Colors.blueGrey),
           ),
           const SizedBox(height: 14),
@@ -443,6 +443,7 @@ class _ClassRadarTile extends StatelessWidget {
     return Tooltip(
       message: item.reviewReason ?? item.label,
       child: Material(
+        key: ValueKey('class-radar-${item.classId}'),
         color: color.withValues(alpha: .07),
         borderRadius: BorderRadius.circular(16),
         child: InkWell(
@@ -488,7 +489,11 @@ class _ClassRadarTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  '${item.registeredStudents}/${item.totalStudents} طالب',
+                  item.isComplete
+                      ? 'الغياب ${item.absentStudents} • الاستئذان ${item.excusedStudents}'
+                      : 'الغياب ${item.absentStudents} • أغلق لاعتماد البقية',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.blueGrey, fontSize: 10),
                 ),
               ],

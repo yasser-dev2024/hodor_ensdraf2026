@@ -10,6 +10,40 @@ import 'package:morning_student_attendance/models/attendance_record.dart';
 import 'package:morning_student_attendance/models/daily_preparation.dart';
 
 void main() {
+  test('الرادار ينتقل للفصل التالي غير المكتمل ويتجاوز المكتمل والمراجعة', () {
+    ClassPreparationStatus item(String id, ClassPreparationState state) =>
+        ClassPreparationStatus(
+          classId: id,
+          gradeId: 'g1',
+          gradeName: 'السادس',
+          className: id,
+          totalStudents: 10,
+          registeredStudents: state == ClassPreparationState.complete ? 10 : 0,
+          state: state,
+        );
+    final snapshot = DailyPreparationSnapshot(
+      date: DateTime(2026, 8, 21),
+      classes: [
+        item('c1', ClassPreparationState.complete),
+        item('c2', ClassPreparationState.needsReview),
+        item('c3', ClassPreparationState.incomplete),
+        item('c4', ClassPreparationState.incomplete),
+      ],
+      summary: const DailySummary(
+        totalStudents: 40,
+        registered: 10,
+        present: 10,
+        absent: 0,
+        excused: 0,
+      ),
+      unassignedStudents: 0,
+    );
+
+    expect(snapshot.nextIncompleteAfter('c1')?.classId, 'c3');
+    expect(snapshot.nextIncompleteAfter('c3')?.classId, 'c4');
+    expect(snapshot.nextIncompleteAfter('c4')?.classId, 'c3');
+  });
+
   testWidgets('الواجهة الذكية وبصمة اليوم لا تسببان overflow على هاتف ضيق', (
     tester,
   ) async {
@@ -26,6 +60,9 @@ void main() {
           className: '1',
           totalStudents: 25,
           registeredStudents: 25,
+          presentStudents: 23,
+          absentStudents: 1,
+          excusedStudents: 1,
           state: ClassPreparationState.complete,
           completedAt: date,
         ),
@@ -72,6 +109,11 @@ void main() {
     }
 
     expect(find.text('رادار الفصول'), findsOneWidget);
+    expect(
+      find.textContaining('سجّل الغائبين والمستأذنين فقط'),
+      findsOneWidget,
+    );
+    expect(find.text('الغياب 1 • الاستئذان 1'), findsOneWidget);
     expect(find.text('بصمة اليوم'), findsOneWidget);
     expect(find.text('حفظ PNG'), findsOneWidget);
     expect(find.text('مشاركة البطاقة'), findsOneWidget);

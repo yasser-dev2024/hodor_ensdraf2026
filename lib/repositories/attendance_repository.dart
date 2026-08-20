@@ -334,6 +334,91 @@ class AttendanceRepository {
     );
   }
 
+  /// Completes one class after its absences have been recorded by marking only
+  /// that class's unresolved students present. The day stays open and every
+  /// existing attendance record remains untouched.
+  Future<int> completeClassWithRemainingPresent({
+    required String userId,
+    required String date,
+    required String classId,
+  }) async {
+    await _requireAttendanceWriter(userId);
+    final target = _validatedDayKey(date);
+    if (await isDayClosed(target)) {
+      throw const ClosedAttendanceDayException();
+    }
+
+    final classRows = await _database.db.query(
+      'classes',
+      columns: const ['id'],
+      where: 'id = ?',
+      whereArgs: [classId],
+      limit: 1,
+    );
+    if (classRows.isEmpty) throw StateError('الفصل غير موجود.');
+
+    final activeRows = await _database.db.rawQuery(
+      '''
+      SELECT COUNT(*) AS count
+      FROM students
+      WHERE status = 'active'
+        AND class_id = ?
+        AND date(created_at) <= date(?)
+      ''',
+      [classId, target],
+    );
+    if ((activeRows.first['count'] as int) == 0) {
+      throw StateError('لا يوجد طلاب نشطون في هذا الفصل.');
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    return _database.db.transaction((txn) async {
+      final remaining = await txn.rawQuery(
+        '''
+        SELECT s.id, s.class_id
+        FROM students s
+        WHERE s.status = 'active'
+          AND s.class_id = ?
+          AND date(s.created_at) <= date(?)
+          AND NOT EXISTS (
+            SELECT 1 FROM attendance a
+            WHERE a.student_id = s.id AND a.attendance_date = ?
+          )
+        ORDER BY s.name
+        ''',
+        [classId, target, target],
+      );
+      var inserted = 0;
+      for (final student in remaining) {
+        final id = await txn.insert('attendance', {
+          'id': _uuid.v4(),
+          'student_id': student['id'],
+          'status': AttendanceStatus.present.name,
+          'attendance_date': target,
+          'recorded_at': now,
+          'recorded_by': userId,
+          'class_id_snapshot': student['class_id'],
+          'note': 'حضور تلقائي عند اعتماد الفصل بعد حصر الغياب والاستئذان',
+          'updated_at': now,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        if (id != 0) inserted++;
+      }
+      await txn.insert('audit_logs', {
+        'action': 'attendance_class_complete',
+        'entity_type': 'class_attendance',
+        'entity_id': '$target:$classId',
+        'user_id': userId,
+        'occurred_at': now,
+        'new_value': jsonEncode({
+          'date': target,
+          'class_id': classId,
+          'marked_present': inserted,
+        }),
+      });
+      return inserted;
+    });
+  }
+
   Future<Map<AttendanceStatus, int>> studentStats(String studentId) async {
     final rows = await _database.db.rawQuery(
       'SELECT status, COUNT(*) AS count FROM attendance WHERE student_id = ? GROUP BY status',
