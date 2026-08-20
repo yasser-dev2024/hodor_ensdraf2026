@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:morning_student_attendance/core/school_day_formatter.dart';
 import 'package:morning_student_attendance/data/app_database.dart';
 import 'package:morning_student_attendance/models/attendance_record.dart';
 import 'package:morning_student_attendance/models/app_user.dart';
@@ -157,6 +158,57 @@ void main() {
     expect(second.wasExisting, isTrue);
     expect(second.record.status, AttendanceStatus.present);
     expect((await attendance.getDaily()).length, 1);
+  });
+
+  test('يفصل المسح بين الأيام ويقبل الطالب نفسه في اليوم التالي', () async {
+    final student = await students.create(
+      name: 'طالب يتكرر حضوره يوميًا',
+      nationalId: '1011111129',
+      userId: managerId,
+    );
+    final firstDay = attendance.dayKey();
+    final secondDay = SchoolDayFormatter.key(
+      DateTime.now().add(const Duration(days: 1)),
+    );
+
+    await attendance.record(
+      student: student,
+      status: AttendanceStatus.absent,
+      userId: managerId,
+      attendanceDate: firstDay,
+    );
+    await attendance.closeDay(
+      userId: managerId,
+      date: firstDay,
+      markUnregisteredPresent: true,
+    );
+
+    expect(
+      () => attendance.record(
+        student: student,
+        status: AttendanceStatus.present,
+        userId: managerId,
+        attendanceDate: firstDay,
+      ),
+      throwsA(isA<ClosedAttendanceDayException>()),
+    );
+    final nextDay = await attendance.record(
+      student: student,
+      status: AttendanceStatus.present,
+      userId: managerId,
+      attendanceDate: secondDay,
+    );
+
+    expect(nextDay.wasExisting, isFalse);
+    expect(
+      (await attendance.getForStudent(student.id, date: firstDay))?.status,
+      AttendanceStatus.absent,
+    );
+    expect(
+      (await attendance.getForStudent(student.id, date: secondDay))?.status,
+      AttendanceStatus.present,
+    );
+    expect(await attendance.availableDates(), [secondDay, firstDay]);
   });
 
   test('البحث الشامل وسجل النقل والحضور يحفظان التفاصيل', () async {
@@ -320,23 +372,52 @@ void main() {
     expect(analytics.bestClass?.label, 'سادس / 1');
   });
 
-  test('إغلاق اليوم وإعادة فتحه محميان ومسجلان في Audit Log', () async {
-    const date = '2026-08-19';
-    final student = await students.create(
-      name: 'طالب لم يسجل',
+  test('إغلاق اليوم يعتمد بقية الطلاب حاضرين ويحفظ الموظف', () async {
+    final date = attendance.dayKey();
+    final absentStudent = await students.create(
+      name: 'طالب غائب',
       nationalId: '1055555555',
       userId: managerId,
+    );
+    final presentStudent = await students.create(
+      name: 'طالب يعتمد حاضرًا',
+      nationalId: '1055555556',
+      userId: managerId,
+    );
+    await attendance.record(
+      student: absentStudent,
+      status: AttendanceStatus.absent,
+      userId: managerId,
+      attendanceDate: date,
     );
     await attendance.closeDay(
       userId: managerId,
       date: date,
-      markUnregisteredAbsent: true,
+      markUnregisteredPresent: true,
     );
     expect(await attendance.isDayClosed(date), isTrue);
-    expect(
-      (await attendance.getForStudent(student.id, date: date))?.status,
-      AttendanceStatus.absent,
+    final completed = await attendance.getForStudent(
+      presentStudent.id,
+      date: date,
     );
+    expect(completed?.status, AttendanceStatus.present);
+    expect(completed?.recordedBy, 'مدير الاختبار');
+    final summary = await attendance.summary(date: date);
+    expect(summary.registered, 2);
+    expect(summary.present, 1);
+    expect(summary.absent, 1);
+    final day = await attendance.dayOverview(date);
+    expect(day.isClosed, isTrue);
+    expect(day.recordCount, 2);
+    expect(day.closedBy, 'مدير الاختبار');
+    await students.create(
+      name: 'طالب أضيف بعد إغلاق الحصر',
+      nationalId: '1055555557',
+      userId: managerId,
+    );
+    final preserved = await attendance.summary(date: date);
+    expect(preserved.totalStudents, 2);
+    expect(preserved.registered, 2);
 
     await attendance.reopenDay(userId: managerId, date: date);
     expect(await attendance.isDayClosed(date), isFalse);

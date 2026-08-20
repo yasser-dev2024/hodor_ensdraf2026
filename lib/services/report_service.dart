@@ -8,6 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../core/school_day_formatter.dart';
 import '../models/attendance_record.dart';
 import '../models/period_report.dart';
 import '../models/student.dart';
@@ -25,6 +26,7 @@ class ReportService {
     required String schoolName,
   }) async {
     final font = await _arabicFont();
+    final reportDate = SchoolDayFormatter.parseKey(date);
     final document = pw.Document(
       title: 'تقرير الحضور $date',
       author: schoolName,
@@ -58,7 +60,19 @@ class ReportService {
         ),
         build: (context) => [
           pw.SizedBox(height: 16),
-          pw.Text('التاريخ: $date', style: const pw.TextStyle(fontSize: 13)),
+          pw.Text(
+            'اليوم والتاريخ الميلادي: ${SchoolDayFormatter.gregorianLong(reportDate)}',
+            style: const pw.TextStyle(fontSize: 13),
+          ),
+          pw.Text(
+            'التاريخ الهجري: ${SchoolDayFormatter.hijriLong(reportDate)}',
+            style: const pw.TextStyle(fontSize: 13),
+          ),
+          if (records.isNotEmpty)
+            pw.Text(
+              'موظفو تسجيل الحالات: ${records.map((record) => record.recordedBy).toSet().join('، ')}',
+              style: const pw.TextStyle(fontSize: 11),
+            ),
           pw.SizedBox(height: 14),
           pw.Row(
             children: [
@@ -91,11 +105,18 @@ class ReportService {
           ),
           pw.SizedBox(height: 18),
           pw.TableHelper.fromTextArray(
-            headers: const ['الحالة', 'الوقت', 'الصف / الفصل', 'اسم الطالب'],
+            headers: const [
+              'الحالة',
+              'الموظف',
+              'الوقت',
+              'الصف / الفصل',
+              'اسم الطالب',
+            ],
             data: records
                 .map(
                   (record) => [
                     record.status.label,
+                    record.recordedBy,
                     DateFormat(
                       'hh:mm a',
                       'ar',
@@ -502,8 +523,10 @@ class ReportService {
         'اسم الطالب',
         'الصف / الفصل',
         'الحالة',
-        'التاريخ',
+        'اليوم والتاريخ الميلادي',
+        'التاريخ الهجري',
         'الوقت',
+        'الموظف الذي سجل الحالة',
       ].map(TextCellValue.new).toList(),
     );
     for (final record in records) {
@@ -512,8 +535,14 @@ class ReportService {
           record.studentName,
           record.classLabel,
           record.status.label,
-          record.attendanceDate,
+          SchoolDayFormatter.gregorianLong(
+            SchoolDayFormatter.parseKey(record.attendanceDate),
+          ),
+          SchoolDayFormatter.hijriLong(
+            SchoolDayFormatter.parseKey(record.attendanceDate),
+          ),
           DateFormat('HH:mm').format(record.recordedAt.toLocal()),
+          record.recordedBy,
         ].map(TextCellValue.new).toList(),
       );
     }

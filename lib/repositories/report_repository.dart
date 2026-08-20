@@ -32,7 +32,9 @@ class ReportRepository {
         (scope.id == null || scope.id!.trim().isEmpty)) {
       throw const FormatException('يجب تحديد نطاق التقرير.');
     }
-    final conditions = <String>["s.status IN ('active', 'inactive')"];
+    final conditions = <String>[
+      "s.status IN ('active', 'inactive', 'graduated')",
+    ];
     final args = <Object?>[];
     if (scope.type == ReportScopeType.student) {
       conditions.add('s.id = ?');
@@ -304,7 +306,8 @@ class ReportRepository {
     final studentRows = await _database.db.query(
       'students',
       columns: ['id', 'class_id', 'created_at', 'deleted_at'],
-      where: "status IN ('active', 'inactive') AND date(created_at) <= ?",
+      where:
+          "status IN ('active', 'inactive', 'graduated') AND date(created_at) <= ?",
       whereArgs: [_dayFormat.format(end)],
     );
     final transferRows = await _database.db.query(

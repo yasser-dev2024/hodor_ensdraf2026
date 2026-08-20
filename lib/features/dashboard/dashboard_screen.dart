@@ -262,7 +262,7 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                             const SizedBox(width: 10),
                             Expanded(
                               child: Text(
-                                'لا يزال هناك ${summary.remaining} طالبًا لم يتم تسجيل حالتهم. لن يُعتبروا غائبين تلقائيًا.',
+                                'لا يزال هناك ${summary.remaining} طالبًا دون حالة. يمكنك تسجيل الغياب والاستئذان فقط، ثم اعتماد البقية حاضرين عند إغلاق التحضير.',
                               ),
                             ),
                           ],

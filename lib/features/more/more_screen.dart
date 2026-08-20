@@ -114,7 +114,7 @@ class MoreScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 18),
           const Text(
-            'الإصدار 1.1.0 • يعمل محليًا بدون إنترنت',
+            'الإصدار 1.3.0 • يعمل محليًا بدون إنترنت',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 11, color: Colors.blueGrey),
           ),

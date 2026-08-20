@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
+import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
+import '../../models/attendance_record.dart';
 import '../../models/school_class.dart';
+import '../reports/daily_report_screen.dart';
 import 'scanner_screen.dart';
 
 class ScanLandingScreen extends ConsumerStatefulWidget {
@@ -20,6 +23,11 @@ class _ScanLandingScreenState extends ConsumerState<ScanLandingScreen> {
   @override
   Widget build(BuildContext context) {
     ref.watch(dataRevisionProvider);
+    final today = SchoolDayFormatter.dateOnly(DateTime.now());
+    final todayKey = SchoolDayFormatter.key(today);
+    final dayFuture = ref
+        .read(attendanceRepositoryProvider)
+        .dayOverview(todayKey);
     return SafeArea(
       child: ListView(
         padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
@@ -35,6 +43,69 @@ class _ScanLandingScreenState extends ConsumerState<ScanLandingScreen> {
           Text(
             'امسح رمز الطالب ثم اختر حالته بلمسة واحدة.',
             style: TextStyle(color: Colors.blueGrey.shade600),
+          ),
+          const SizedBox(height: 14),
+          FutureBuilder<AttendanceDayOverview>(
+            future: dayFuture,
+            builder: (context, snapshot) {
+              final day = snapshot.data;
+              final closed = day?.isClosed ?? false;
+              return Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: closed
+                      ? const Color(0xFFFFECEB)
+                      : const Color(0xFFE8F7F1),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: closed
+                        ? AppColors.absent.withValues(alpha: .35)
+                        : AppColors.present.withValues(alpha: .35),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      closed ? Icons.lock_rounded : Icons.today_rounded,
+                      color: closed ? AppColors.absent : AppColors.present,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            SchoolDayFormatter.gregorianLong(today),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.navy,
+                            ),
+                          ),
+                          Text(
+                            '${SchoolDayFormatter.hijriLong(today)} — ${closed ? 'اليوم مغلق' : 'اليوم مفتوح للمسح'}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: closed
+                                  ? AppColors.absent
+                                  : AppColors.present,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (closed)
+                      TextButton(
+                        onPressed: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => DailyReportScreen(date: today),
+                          ),
+                        ),
+                        child: const Text('التقرير'),
+                      ),
+                  ],
+                ),
+              );
+            },
           ),
           const SizedBox(height: 24),
           Container(
@@ -86,22 +157,51 @@ class _ScanLandingScreenState extends ConsumerState<ScanLandingScreen> {
                   style: TextStyle(color: Colors.white.withValues(alpha: .8)),
                 ),
                 const SizedBox(height: 22),
-                FilledButton.icon(
-                  onPressed: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ScannerScreen(
-                        classId: _classId,
-                        classLabel: _classLabel,
+                FutureBuilder<AttendanceDayOverview>(
+                  future: dayFuture,
+                  builder: (context, snapshot) {
+                    final ready = snapshot.hasData;
+                    final closed = snapshot.data?.isClosed ?? false;
+                    final failed = snapshot.hasError;
+                    return FilledButton.icon(
+                      onPressed: !ready || closed
+                          ? null
+                          : () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => ScannerScreen(
+                                  attendanceDate: todayKey,
+                                  classId: _classId,
+                                  classLabel: _classLabel,
+                                ),
+                              ),
+                            ),
+                      icon: Icon(
+                        failed
+                            ? Icons.error_outline_rounded
+                            : !ready
+                            ? Icons.hourglass_top_rounded
+                            : closed
+                            ? Icons.lock_rounded
+                            : Icons.camera_alt_rounded,
                       ),
-                    ),
-                  ),
-                  icon: const Icon(Icons.camera_alt_rounded),
-                  label: const Text('فتح الكاميرا وبدء التسجيل'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: AppColors.navy,
-                    minimumSize: const Size.fromHeight(62),
-                  ),
+                      label: Text(
+                        failed
+                            ? 'تعذر التحقق من يوم العمل'
+                            : !ready
+                            ? 'جاري التحقق من يوم العمل'
+                            : closed
+                            ? 'انتهى المسح لهذا اليوم'
+                            : 'فتح الكاميرا وبدء التسجيل',
+                      ),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: AppColors.navy,
+                        disabledBackgroundColor: Colors.white70,
+                        disabledForegroundColor: AppColors.absent,
+                        minimumSize: const Size.fromHeight(62),
+                      ),
+                    );
+                  },
                 ),
               ],
             ),

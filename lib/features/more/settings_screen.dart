@@ -30,7 +30,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String? _logoPath;
   bool _scanSound = true;
   bool _scanHaptic = true;
-  bool _autoAbsentOnClose = false;
+  bool _markUnregisteredPresentOnClose = true;
   bool _autoArchivePdf = true;
   String _barcodeCardSize = 'standard';
   String _agentSendMethod = 'whatsapp';
@@ -69,7 +69,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _backupReminderDays.text = values['backup_reminder_days'] ?? '7';
       _scanSound = values['scan_sound'] != 'false';
       _scanHaptic = values['scan_haptic'] != 'false';
-      _autoAbsentOnClose = values['auto_absent_on_close'] == 'true';
+      _markUnregisteredPresentOnClose =
+          values['mark_unregistered_present_on_close'] != 'false';
       _autoArchivePdf = values['auto_archive_pdf'] != 'false';
       _barcodeCardSize = values['barcode_card_size'] ?? 'standard';
       _agentSendMethod = values['agent_send_method'] ?? 'whatsapp';
@@ -305,14 +306,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         SwitchListTile(
                           contentPadding: EdgeInsets.zero,
-                          value: _autoAbsentOnClose,
-                          onChanged: (value) =>
-                              setState(() => _autoAbsentOnClose = value),
+                          value: _markUnregisteredPresentOnClose,
+                          onChanged: (value) => setState(
+                            () => _markUnregisteredPresentOnClose = value,
+                          ),
                           title: const Text(
-                            'تحويل غير المسجلين إلى غياب عند الإغلاق',
+                            'اعتبار غير المسجلين حاضرين عند إغلاق التحضير',
                           ),
                           subtitle: const Text(
-                            'حساس ومعطل افتراضيًا؛ تظهر رسالة تأكيد قبل التنفيذ.',
+                            'يسمح بتسجيل الغائبين والمستأذنين فقط، ثم يحتسب بقية الطلاب حاضرين توفيرًا للوقت.',
                           ),
                         ),
                         TextField(
@@ -383,10 +385,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
+      if (_academicYear.text.trim().isEmpty) {
+        throw const FormatException('أدخل العام الدراسي الحالي.');
+      }
       final repository = ref.read(settingsRepositoryProvider);
+      await ref
+          .read(studentRepositoryProvider)
+          .setCurrentAcademicYear(
+            label: _academicYear.text,
+            userId: ref.read(currentUserProvider)!.id,
+          );
       await Future.wait([
         repository.set('school_name', _schoolName.text),
-        repository.set('academic_year', _academicYear.text),
         repository.set('semester', _semester.text),
         repository.set('agent_name', _agentName.text),
         repository.set('agent_phone', _agentPhone.text),
@@ -399,7 +409,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         repository.set('scan_sound', '$_scanSound'),
         repository.set('scan_haptic', '$_scanHaptic'),
-        repository.set('auto_absent_on_close', '$_autoAbsentOnClose'),
+        repository.set(
+          'mark_unregistered_present_on_close',
+          '$_markUnregisteredPresentOnClose',
+        ),
         repository.set('auto_archive_pdf', '$_autoArchivePdf'),
         repository.set('barcode_card_size', _barcodeCardSize),
       ]);

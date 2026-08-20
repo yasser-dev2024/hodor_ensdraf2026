@@ -116,8 +116,11 @@ class BackupService {
     final manifest =
         jsonDecode(utf8.decode(List<int>.from(manifestFile.content)))
             as Map<String, dynamic>;
+    final backupSchemaVersion = manifest['schema_version'] as int?;
     if (manifest['format'] != _magic ||
-        manifest['schema_version'] != AppDatabase.schemaVersion) {
+        backupSchemaVersion == null ||
+        backupSchemaVersion < 2 ||
+        backupSchemaVersion > AppDatabase.schemaVersion) {
       throw const FormatException(
         'إصدار النسخة الاحتياطية غير متوافق مع التطبيق.',
       );
@@ -149,7 +152,7 @@ class BackupService {
       final version =
           (await checkDb.rawQuery('PRAGMA user_version')).first.values.first
               as int;
-      if (version != AppDatabase.schemaVersion) {
+      if (version != backupSchemaVersion) {
         throw const FormatException('إصدار مخطط قاعدة البيانات غير متوافق.');
       }
     } finally {
@@ -335,6 +338,7 @@ class BackupService {
       await db.execute('PRAGMA foreign_keys = ON');
       await db.rawQuery('PRAGMA journal_mode = WAL');
     },
+    onUpgrade: AppDatabase.upgradeSchemaForTesting,
   );
 
   static Future<void> _moveSidecarIfPresent(

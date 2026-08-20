@@ -1,9 +1,9 @@
 import 'dart:convert';
 
-import 'package:intl/intl.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
+import '../core/school_day_formatter.dart';
 import '../data/app_database.dart';
 import '../models/attendance_record.dart';
 import '../models/student.dart';
@@ -18,10 +18,7 @@ class AttendanceRepository {
   AttendanceRepository(this._database);
   final AppDatabase _database;
   static const _uuid = Uuid();
-  static final _dayFormat = DateFormat('yyyy-MM-dd');
-
-  String dayKey([DateTime? date]) =>
-      _dayFormat.format((date ?? DateTime.now()).toLocal());
+  String dayKey([DateTime? date]) => SchoolDayFormatter.key(date);
 
   Future<AttendanceSaveResult> record({
     required Student student,
@@ -32,10 +29,13 @@ class AttendanceRepository {
     String? receiverName,
     DateTime? departureAt,
     DateTime? at,
+    String? attendanceDate,
   }) async {
     await _requireAttendanceWriter(userId);
     final now = (at ?? DateTime.now()).toUtc();
-    final date = dayKey(at);
+    final date = attendanceDate == null
+        ? dayKey(at)
+        : _validatedDayKey(attendanceDate);
     if (await isDayClosed(date)) throw const ClosedAttendanceDayException();
     final existing = await getForStudent(student.id, date: date);
     if (existing != null) {
@@ -256,9 +256,35 @@ class AttendanceRepository {
 
   Future<DailySummary> summary({String? date, String? classId}) async {
     final targetDate = date ?? dayKey();
+    if (classId == null) {
+      final closedRows = await _database.db.query(
+        'closed_days',
+        columns: const ['snapshot_json'],
+        where: 'attendance_date = ? AND reopened_at IS NULL',
+        whereArgs: [targetDate],
+        limit: 1,
+      );
+      if (closedRows.isNotEmpty) {
+        try {
+          final snapshot =
+              jsonDecode(closedRows.first['snapshot_json'] as String)
+                  as Map<String, dynamic>;
+          final value = snapshot['summary'] as Map<String, dynamic>;
+          return DailySummary(
+            totalStudents: value['total'] as int,
+            registered: value['registered'] as int,
+            present: value['present'] as int,
+            absent: value['absent'] as int,
+            excused: value['excused'] as int,
+          );
+        } catch (_) {
+          // Older or damaged snapshots fall back to the live rows below.
+        }
+      }
+    }
     final totalResult = await _database.db.rawQuery(
-      "SELECT COUNT(*) AS count FROM students WHERE status = 'active' ${classId == null ? '' : 'AND class_id = ?'}",
-      [if (classId != null) classId],
+      "SELECT COUNT(*) AS count FROM students WHERE status = 'active' AND date(created_at) <= date(?) ${classId == null ? '' : 'AND class_id = ?'}",
+      [targetDate, if (classId != null) classId],
     );
     final statusRows = await _database.db.rawQuery(
       '''
@@ -325,12 +351,48 @@ class AttendanceRepository {
   }
 
   Future<List<String>> availableDates() async {
+    final days = await availableDays();
+    return days.map((day) => day.date).toList();
+  }
+
+  Future<List<AttendanceDayOverview>> availableDays() async {
     final rows = await _database.db.rawQuery('''
-      SELECT attendance_date FROM attendance
-      UNION SELECT attendance_date FROM closed_days
-      ORDER BY attendance_date DESC
+      SELECT days.attendance_date,
+             COUNT(a.id) AS record_count,
+             cd.closed_at,
+             cd.reopened_at,
+             u.name AS closed_by_name
+      FROM (
+        SELECT attendance_date FROM attendance
+        UNION SELECT attendance_date FROM closed_days
+      ) days
+      LEFT JOIN attendance a ON a.attendance_date = days.attendance_date
+      LEFT JOIN closed_days cd ON cd.attendance_date = days.attendance_date
+      LEFT JOIN users u ON u.id = cd.closed_by
+      GROUP BY days.attendance_date, cd.closed_at, cd.reopened_at, u.name
+      ORDER BY days.attendance_date DESC
     ''');
-    return rows.map((row) => row['attendance_date'] as String).toList();
+    return rows.map(_dayOverviewFromRow).toList();
+  }
+
+  Future<AttendanceDayOverview> dayOverview(String date) async {
+    final target = _validatedDayKey(date);
+    final rows = await _database.db.rawQuery(
+      '''
+      SELECT ? AS attendance_date,
+             COUNT(a.id) AS record_count,
+             cd.closed_at,
+             cd.reopened_at,
+             u.name AS closed_by_name
+      FROM (SELECT 1) seed
+      LEFT JOIN attendance a ON a.attendance_date = ?
+      LEFT JOIN closed_days cd ON cd.attendance_date = ?
+      LEFT JOIN users u ON u.id = cd.closed_by
+      GROUP BY cd.closed_at, cd.reopened_at, u.name
+      ''',
+      [target, target, target],
+    );
+    return _dayOverviewFromRow(rows.single);
   }
 
   Future<bool> isDayClosed(String date) async {
@@ -378,14 +440,14 @@ class AttendanceRepository {
   Future<void> closeDay({
     required String userId,
     String? date,
-    bool markUnregisteredAbsent = false,
+    bool markUnregisteredPresent = false,
   }) async {
     await _requireManager(userId);
     final target = date ?? dayKey();
     if (await isDayClosed(target)) {
       throw StateError('هذا اليوم مغلق مسبقًا.');
     }
-    if (markUnregisteredAbsent) {
+    if (markUnregisteredPresent) {
       final remaining = await unregistered(date: target);
       final now = DateTime.now().toUtc().toIso8601String();
       await _database.db.transaction((txn) async {
@@ -393,17 +455,17 @@ class AttendanceRepository {
           await txn.insert('attendance', {
             'id': _uuid.v4(),
             'student_id': student['id'],
-            'status': AttendanceStatus.absent.name,
+            'status': AttendanceStatus.present.name,
             'attendance_date': target,
             'recorded_at': now,
             'recorded_by': userId,
             'class_id_snapshot': student['class_id'],
-            'note': 'غياب تلقائي عند إغلاق اليوم بإعداد إداري مفعل',
+            'note': 'حضور تلقائي عند إغلاق اليوم بعد تسجيل الغياب والاستئذان',
             'updated_at': now,
           });
         }
         await txn.insert('audit_logs', {
-          'action': 'attendance_bulk_absent',
+          'action': 'attendance_bulk_present',
           'entity_type': 'attendance_day',
           'entity_id': target,
           'user_id': userId,
@@ -429,6 +491,7 @@ class AttendanceRepository {
               'student_name': r.studentName,
               'status': r.status.name,
               'recorded_at': r.recordedAt.toIso8601String(),
+              'recorded_by': r.recordedBy,
             },
           )
           .toList(),
@@ -474,6 +537,28 @@ class AttendanceRepository {
 
   static String? _emptyToNull(String? value) =>
       value == null || value.trim().isEmpty ? null : value.trim();
+
+  AttendanceDayOverview _dayOverviewFromRow(Map<String, Object?> row) {
+    final closedAt = row['closed_at'] as String?;
+    return AttendanceDayOverview(
+      date: row['attendance_date'] as String,
+      recordCount: row['record_count'] as int,
+      isClosed: closedAt != null && row['reopened_at'] == null,
+      closedAt: closedAt == null ? null : DateTime.parse(closedAt),
+      closedBy: row['closed_by_name'] as String?,
+    );
+  }
+
+  String _validatedDayKey(String value) {
+    if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) {
+      throw const FormatException('تاريخ يوم الحضور غير صالح.');
+    }
+    final parsed = DateTime.tryParse(value);
+    if (parsed == null || SchoolDayFormatter.key(parsed) != value) {
+      throw const FormatException('تاريخ يوم الحضور غير صالح.');
+    }
+    return value;
+  }
 
   Future<void> _requireAttendanceWriter(String userId) async {
     final rows = await _database.db.query(

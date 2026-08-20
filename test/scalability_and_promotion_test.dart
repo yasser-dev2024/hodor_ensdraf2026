@@ -5,6 +5,7 @@ import 'package:morning_student_attendance/data/app_database.dart';
 import 'package:morning_student_attendance/models/attendance_record.dart';
 import 'package:morning_student_attendance/models/import_models.dart';
 import 'package:morning_student_attendance/models/period_report.dart';
+import 'package:morning_student_attendance/models/student.dart';
 import 'package:morning_student_attendance/repositories/attendance_repository.dart';
 import 'package:morning_student_attendance/repositories/auth_repository.dart';
 import 'package:morning_student_attendance/repositories/class_repository.dart';
@@ -266,6 +267,93 @@ void main() {
     expect(await fixture.students.activeCount(gradeId: source), 1);
     expect(await fixture.students.activeCount(gradeId: target), 0);
     expect(await fixture.database.db.query('transfers'), isEmpty);
+  });
+
+  test('يخفي خريجي السادس ويحفظ العام ثم يبقي ترحيل الخامس يدويًا', () async {
+    final fixture = await _Fixture.create();
+    addTearDown(fixture.close);
+    final fifth = await fixture.classes.addGrade(
+      'الخامس',
+      userId: fixture.managerId,
+    );
+    final sixth = await fixture.classes.addGrade(
+      'السادس',
+      userId: fixture.managerId,
+    );
+    final fifthClass = await fixture.classes.addClass(
+      fifth,
+      '1',
+      userId: fixture.managerId,
+    );
+    final sixthClass = await fixture.classes.addClass(
+      sixth,
+      '1',
+      userId: fixture.managerId,
+    );
+    final graduate = await fixture.students.create(
+      name: 'خريج الصف السادس',
+      nationalId: '2555555555',
+      gradeId: sixth,
+      classId: sixthClass,
+      userId: fixture.managerId,
+    );
+    final promoted = await fixture.students.create(
+      name: 'طالب الصف الخامس',
+      nationalId: '2666666666',
+      gradeId: fifth,
+      classId: fifthClass,
+      userId: fixture.managerId,
+    );
+    await fixture.attendance.record(
+      student: graduate,
+      status: AttendanceStatus.present,
+      userId: fixture.managerId,
+    );
+    await fixture.students.setCurrentAcademicYear(
+      label: '1447 / 1448 هـ',
+      userId: fixture.managerId,
+    );
+
+    final graduation = await fixture.students.graduateGrade(
+      sourceGradeId: sixth,
+      userId: fixture.managerId,
+    );
+    expect(graduation.graduated, 1);
+    expect(await fixture.students.getAll(includeInactive: true), [
+      isA<Student>().having((student) => student.id, 'id', promoted.id),
+    ]);
+    expect(await fixture.students.getByBarcode(graduate.barcodeToken), isNull);
+    expect((await fixture.students.getById(graduate.id))?.status, 'graduated');
+    expect(
+      await fixture.attendance.getStudentHistory(graduate.id),
+      hasLength(1),
+    );
+    expect(
+      await fixture.database.db.query('student_graduations'),
+      hasLength(1),
+    );
+
+    final manualPromotion = await fixture.students.promoteGrade(
+      sourceGradeId: fifth,
+      targetGradeId: sixth,
+      classMapping: {fifthClass: sixthClass},
+      userId: fixture.managerId,
+    );
+    expect(manualPromotion.promoted, 1);
+    expect(await fixture.students.activeCount(gradeId: fifth), 0);
+    expect(await fixture.students.activeCount(gradeId: sixth), 1);
+
+    await fixture.students.rolloverAcademicYear(
+      nextLabel: '1448 / 1449 هـ',
+      userId: fixture.managerId,
+    );
+    final years = await fixture.students.getAcademicYears();
+    expect(years, hasLength(2));
+    expect(years.first.label, '1448 / 1449 هـ');
+    expect(years.first.isCurrent, isTrue);
+    expect(years.last.label, '1447 / 1448 هـ');
+    expect(years.last.isCurrent, isFalse);
+    expect(years.last.graduatedStudents, 1);
   });
 
   test('الإحصاءات ترتب أفضل طالب وأكثر غياب واستئذان وأفضل فصل بدقة', () async {

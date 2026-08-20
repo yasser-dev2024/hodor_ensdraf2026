@@ -122,6 +122,11 @@ class _AuthGateState extends ConsumerState<AuthGate> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen<AppUser?>(currentUserProvider, (previous, next) {
+      if (previous != null && next == null) {
+        unawaited(_resetAfterLogout());
+      }
+    });
     final currentUser = ref.watch(currentUserProvider);
     if (currentUser != null) return const AppShell();
     if (_loading) {
@@ -134,6 +139,20 @@ class _AuthGateState extends ConsumerState<AuthGate> {
           : 'اختر اسم المستخدم وأدخل كلمة المرور.',
       child: _needsSetup ? _buildSetupForm() : _buildLoginForm(),
     );
+  }
+
+  Future<void> _resetAfterLogout() async {
+    _credential.clear();
+    _setupPassword.clear();
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _error = null;
+      _enableBiometricAfterLogin = false;
+      _obscureCredential = true;
+      _obscureSetupPassword = true;
+    });
+    await _load();
   }
 
   Widget _buildSetupForm() {

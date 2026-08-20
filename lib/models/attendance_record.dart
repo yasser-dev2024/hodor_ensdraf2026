@@ -61,3 +61,19 @@ class AttendanceSaveResult {
   final AttendanceRecord record;
   final bool wasExisting;
 }
+
+class AttendanceDayOverview {
+  const AttendanceDayOverview({
+    required this.date,
+    required this.recordCount,
+    required this.isClosed,
+    this.closedAt,
+    this.closedBy,
+  });
+
+  final String date;
+  final int recordCount;
+  final bool isClosed;
+  final DateTime? closedAt;
+  final String? closedBy;
+}

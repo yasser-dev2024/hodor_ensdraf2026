@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/providers.dart';
+import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
 import '../../models/period_report.dart';
@@ -40,7 +41,7 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
               DailySummary,
               List<AttendanceRecord>,
               List<Map<String, Object?>>,
-              bool,
+              AttendanceDayOverview,
             )
           >(
             future: _load(repository),
@@ -66,7 +67,8 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
               if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
-              final (summary, records, unregistered, isClosed) = snapshot.data!;
+              final (summary, records, unregistered, day) = snapshot.data!;
+              final isClosed = day.isClosed;
               return ListView(
                 padding: const EdgeInsets.fromLTRB(18, 4, 18, 28),
                 children: [
@@ -76,14 +78,19 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
                       child: Column(
                         children: [
                           Text(
-                            DateFormat(
-                              'EEEE، d MMMM yyyy',
-                              'ar',
-                            ).format(widget.date),
+                            SchoolDayFormatter.gregorianLong(widget.date),
                             style: const TextStyle(
                               fontWeight: FontWeight.w900,
                               fontSize: 18,
                               color: AppColors.navy,
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Text(
+                            SchoolDayFormatter.hijriLong(widget.date),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: AppColors.teal,
                             ),
                           ),
                           const SizedBox(height: 16),
@@ -139,13 +146,16 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
                         borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: const Color(0xFFF3D49B)),
                       ),
-                      child: const Row(
+                      child: Row(
                         children: [
-                          Icon(Icons.lock_rounded, color: AppColors.excused),
-                          SizedBox(width: 9),
+                          const Icon(
+                            Icons.lock_rounded,
+                            color: AppColors.excused,
+                          ),
+                          const SizedBox(width: 9),
                           Expanded(
                             child: Text(
-                              'هذا اليوم مغلق ومحمي من التعديل. يمكن للمدير إعادة فتحه، وتسجل العملية في سجل التدقيق.',
+                              'هذا اليوم مغلق ومحمي من التعديل.${day.closedBy == null ? '' : '\nأغلق الحصر: ${day.closedBy}'}${day.closedAt == null ? '' : ' — ${DateFormat('h:mm a', 'ar').format(day.closedAt!.toLocal())}'}',
                             ),
                           ),
                         ],
@@ -164,7 +174,7 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
                           style: const TextStyle(fontWeight: FontWeight.w900),
                         ),
                         subtitle: const Text(
-                          'لا يتم تحويلهم إلى غياب تلقائيًا',
+                          'عند إغلاق التحضير يمكن اعتمادهم حاضرين تلقائيًا',
                         ),
                         children: unregistered
                             .map(
@@ -271,8 +281,9 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
                               ),
                             ),
                             subtitle: Text(
-                              '${record.classLabel}  •  ${DateFormat('h:mm a', 'ar').format(record.recordedAt.toLocal())}',
+                              '${record.classLabel}  •  ${DateFormat('h:mm a', 'ar').format(record.recordedAt.toLocal())}\nالموظف: ${record.recordedBy}',
                             ),
+                            isThreeLine: true,
                             trailing: Text(
                               record.status.label,
                               style: TextStyle(
@@ -292,7 +303,12 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
   }
 
   Future<
-    (DailySummary, List<AttendanceRecord>, List<Map<String, Object?>>, bool)
+    (
+      DailySummary,
+      List<AttendanceRecord>,
+      List<Map<String, Object?>>,
+      AttendanceDayOverview,
+    )
   >
   _load(repository) async {
     final summary = await repository.summary(date: _dateKey) as DailySummary;
@@ -301,8 +317,8 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
     final unregistered =
         await repository.unregistered(date: _dateKey)
             as List<Map<String, Object?>>;
-    final isClosed = await repository.isDayClosed(_dateKey) as bool;
-    return (summary, records, unregistered, isClosed);
+    final day = await repository.dayOverview(_dateKey) as AttendanceDayOverview;
+    return (summary, records, unregistered, day);
   }
 
   Future<void> _sharePdf(
@@ -384,7 +400,7 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
         settings['whatsapp_template'] ??
         'تقرير الغياب الصباحي\nالتاريخ: {date}\nإجمالي الطلاب: {total}\nالحاضرون: {present}\nالغائبون: {absent}\nالمستأذنون: {excused}\n\nيرجى إرفاق التقرير التفصيلي عند الحاجة.';
     final text = template
-        .replaceAll('{date}', _dateKey)
+        .replaceAll('{date}', SchoolDayFormatter.dualInline(widget.date))
         .replaceAll('{total}', '${summary.totalStudents}')
         .replaceAll('{present}', '${summary.present}')
         .replaceAll('{absent}', '${summary.absent}')
@@ -399,11 +415,11 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
   }
 
   Future<void> _closeDay(int remaining) async {
-    final autoAbsent =
+    final completeWithPresent =
         await ref
             .read(settingsRepositoryProvider)
-            .get('auto_absent_on_close') ==
-        'true';
+            .get('mark_unregistered_present_on_close') !=
+        'false';
     if (!mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -412,9 +428,9 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
         content: Text(
           remaining == 0
               ? 'سيتم حفظ لقطة نهائية للتقرير ومنع التعديل العادي.'
-              : autoAbsent
-              ? 'لا يزال هناك $remaining طالبًا دون حالة. إعداد الغياب التلقائي مفعل؛ سيُسجلون غائبين ثم تُحفظ اللقطة. هل تريد الإغلاق؟'
-              : 'لا يزال هناك $remaining طالبًا دون حالة. سيتم حفظ التقرير كما هو ولن يُعتبروا غائبين تلقائيًا. هل تريد الإغلاق؟',
+              : completeWithPresent
+              ? 'تم تسجيل حالات الغياب والاستئذان، وسيُحتسب بقية الطلاب وعددهم $remaining حاضرين تلقائيًا ثم يُغلق يوم ${SchoolDayFormatter.gregorianLong(widget.date)}. هل تريد المتابعة؟'
+              : 'لا يزال هناك $remaining طالبًا دون حالة. سيتم إغلاق اليوم دون استكمالهم لأن خيار احتساب البقية حاضرين معطل من الإعدادات. هل تريد المتابعة؟',
         ),
         actions: [
           TextButton(
@@ -435,12 +451,18 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
           .closeDay(
             userId: ref.read(currentUserProvider)!.id,
             date: _dateKey,
-            markUnregisteredAbsent: autoAbsent,
+            markUnregisteredPresent: completeWithPresent,
           );
       refreshData(ref);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إغلاق التقرير وحفظ لقطة اليوم.')),
+          SnackBar(
+            content: Text(
+              completeWithPresent && remaining > 0
+                  ? 'تم احتساب بقية الطلاب حاضرين وإغلاق يوم التحضير.'
+                  : 'تم إغلاق التقرير وحفظ لقطة اليوم.',
+            ),
+          ),
         );
       }
     });

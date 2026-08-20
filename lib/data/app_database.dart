@@ -6,7 +6,7 @@ class AppDatabase {
 
   Database db;
   final String? path;
-  static const schemaVersion = 2;
+  static const schemaVersion = 3;
 
   static Future<AppDatabase> open() async {
     final root = await getDatabasesPath();
@@ -38,7 +38,7 @@ class AppDatabase {
     int oldVersion,
     int newVersion,
   ) async {
-    if (oldVersion < 2) {
+    if (oldVersion < 2 && newVersion >= 2) {
       await db.transaction((txn) async {
         await txn.execute('ALTER TABLE users ADD COLUMN password_hash TEXT');
         await txn.execute('ALTER TABLE users ADD COLUMN password_salt TEXT');
@@ -68,6 +68,51 @@ class AppDatabase {
         await txn.execute(
           'CREATE INDEX IF NOT EXISTS idx_report_archives_period ON report_archives(report_type, period_start, period_end)',
         );
+      });
+    }
+    if (oldVersion < 3 && newVersion >= 3) {
+      await db.transaction((txn) async {
+        await txn.execute('''
+          CREATE TABLE IF NOT EXISTS academic_years (
+            id TEXT PRIMARY KEY,
+            label TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL CHECK(status IN ('current','archived')),
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            closed_by TEXT REFERENCES users(id) ON DELETE RESTRICT,
+            summary_json TEXT,
+            created_at TEXT NOT NULL
+          )
+        ''');
+        await txn.execute('''
+          CREATE TABLE IF NOT EXISTS student_graduations (
+            id TEXT PRIMARY KEY,
+            student_id TEXT NOT NULL REFERENCES students(id) ON DELETE RESTRICT,
+            grade_id TEXT REFERENCES grades(id) ON DELETE RESTRICT,
+            class_id TEXT REFERENCES classes(id) ON DELETE RESTRICT,
+            academic_year_label TEXT NOT NULL,
+            graduated_at TEXT NOT NULL,
+            graduated_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+            UNIQUE(student_id, academic_year_label)
+          )
+        ''');
+        await txn.execute('''
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_academic_year_current
+          ON academic_years(status) WHERE status = 'current'
+        ''');
+        await txn.execute('''
+          CREATE INDEX IF NOT EXISTS idx_student_graduations_year
+          ON student_graduations(academic_year_label, graduated_at)
+        ''');
+        await txn.execute('''
+          INSERT OR IGNORE INTO academic_years(
+            id, label, status, started_at, created_at
+          )
+          SELECT 'academic-year-' || lower(hex(randomblob(12))),
+                 TRIM(value), 'current', updated_at, updated_at
+          FROM settings
+          WHERE key = 'academic_year' AND TRIM(value) <> ''
+        ''');
       });
     }
   }
@@ -107,6 +152,18 @@ class AppDatabase {
           active INTEGER NOT NULL DEFAULT 1,
           created_at TEXT NOT NULL,
           last_login_at TEXT
+        )
+      ''');
+      await txn.execute('''
+        CREATE TABLE academic_years (
+          id TEXT PRIMARY KEY,
+          label TEXT NOT NULL UNIQUE,
+          status TEXT NOT NULL CHECK(status IN ('current','archived')),
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          closed_by TEXT REFERENCES users(id) ON DELETE RESTRICT,
+          summary_json TEXT,
+          created_at TEXT NOT NULL
         )
       ''');
       await txn.execute('''
@@ -154,6 +211,18 @@ class AppDatabase {
           new_class_id TEXT NOT NULL REFERENCES classes(id) ON DELETE RESTRICT,
           transferred_at TEXT NOT NULL,
           transferred_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT
+        )
+      ''');
+      await txn.execute('''
+        CREATE TABLE student_graduations (
+          id TEXT PRIMARY KEY,
+          student_id TEXT NOT NULL REFERENCES students(id) ON DELETE RESTRICT,
+          grade_id TEXT REFERENCES grades(id) ON DELETE RESTRICT,
+          class_id TEXT REFERENCES classes(id) ON DELETE RESTRICT,
+          academic_year_label TEXT NOT NULL,
+          graduated_at TEXT NOT NULL,
+          graduated_by TEXT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+          UNIQUE(student_id, academic_year_label)
         )
       ''');
       await txn.execute('''
@@ -234,6 +303,14 @@ class AppDatabase {
       await txn.execute(
         'CREATE INDEX idx_transfers_student ON transfers(student_id, transferred_at)',
       );
+      await txn.execute('''
+        CREATE UNIQUE INDEX idx_academic_year_current
+        ON academic_years(status) WHERE status = 'current'
+      ''');
+      await txn.execute('''
+        CREATE INDEX idx_student_graduations_year
+        ON student_graduations(academic_year_label, graduated_at)
+      ''');
       await txn.execute(
         'CREATE INDEX idx_report_archives_period ON report_archives(report_type, period_start, period_end)',
       );

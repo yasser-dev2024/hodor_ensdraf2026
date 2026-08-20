@@ -7,6 +7,7 @@ import 'package:intl/intl.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../core/providers.dart';
+import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
 import '../../models/student.dart';
@@ -15,7 +16,13 @@ import '../students/student_photo.dart';
 enum _ExistingAction { nextStudent, changeStatus, departure }
 
 class ScannerScreen extends ConsumerStatefulWidget {
-  const ScannerScreen({this.classId, this.classLabel, super.key});
+  const ScannerScreen({
+    required this.attendanceDate,
+    this.classId,
+    this.classLabel,
+    super.key,
+  });
+  final String attendanceDate;
   final String? classId;
   final String? classLabel;
 
@@ -109,6 +116,12 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                       ],
                     ),
                   ),
+                  Positioned(
+                    top: 58,
+                    right: 12,
+                    left: 12,
+                    child: _SessionDayPill(date: widget.attendanceDate),
+                  ),
                   if (_student == null)
                     Positioned(
                       right: 24,
@@ -120,6 +133,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
                             _ProgressPill(
                               classId: widget.classId!,
                               classLabel: widget.classLabel ?? '',
+                              attendanceDate: widget.attendanceDate,
                             ),
                           SliderTheme(
                             data: SliderTheme.of(context).copyWith(
@@ -192,6 +206,19 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     _lastScanAt = now;
     _handling = true;
     try {
+      final attendance = ref.read(attendanceRepositoryProvider);
+      if (attendance.dayKey() != widget.attendanceDate) {
+        await _stopForUnavailableDay(
+          'بدأ يوم دراسي جديد. أُغلقت جلسة المسح السابقة لمنع اختلاط الأيام. افتح الماسح مرة أخرى ليعمل بتاريخ اليوم الجديد.',
+        );
+        return;
+      }
+      if (await attendance.isDayClosed(widget.attendanceDate)) {
+        await _stopForUnavailableDay(
+          'تم إغلاق الحصر والمسح ليوم ${SchoolDayFormatter.gregorianLong(SchoolDayFormatter.parseKey(widget.attendanceDate))}. يمكن للمدير إعادة فتحه من تقرير اليوم.',
+        );
+        return;
+      }
       await _controller.stop();
       final student = await ref
           .read(studentRepositoryProvider)
@@ -221,7 +248,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
       if (_soundEnabled) await SystemSound.play(SystemSoundType.click);
       final existing = await ref
           .read(attendanceRepositoryProvider)
-          .getForStudent(student.id);
+          .getForStudent(student.id, date: widget.attendanceDate);
       if (!mounted) return;
       if (existing != null) {
         await _showExisting(student, existing);
@@ -385,6 +412,7 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
             reason: reason,
             note: note,
             receiverName: receiver,
+            attendanceDate: widget.attendanceDate,
           );
       if (!mounted) return;
       if (result.wasExisting) {
@@ -487,6 +515,27 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
     _handling = false;
     await Future<void>.delayed(const Duration(milliseconds: 450));
     await _startScannerSafely();
+  }
+
+  Future<void> _stopForUnavailableDay(String message) async {
+    await _controller.stop().catchError((Object _) {});
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.event_busy_rounded, color: AppColors.absent),
+        title: const Text('جلسة المسح غير متاحة'),
+        content: Text(message),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('العودة'),
+          ),
+        ],
+      ),
+    );
+    if (mounted) Navigator.pop(context);
   }
 
   Future<void> _startScannerSafely() async {
@@ -671,17 +720,52 @@ class _CameraButton extends StatelessWidget {
   );
 }
 
+class _SessionDayPill extends StatelessWidget {
+  const _SessionDayPill({required this.date});
+
+  final String date;
+
+  @override
+  Widget build(BuildContext context) {
+    final value = SchoolDayFormatter.parseKey(date);
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 7),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Text(
+          '${SchoolDayFormatter.gregorianLong(value)}\n${SchoolDayFormatter.hijriLong(value)}',
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ProgressPill extends ConsumerWidget {
-  const _ProgressPill({required this.classId, required this.classLabel});
+  const _ProgressPill({
+    required this.classId,
+    required this.classLabel,
+    required this.attendanceDate,
+  });
   final String classId;
   final String classLabel;
+  final String attendanceDate;
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final repository = ref.read(attendanceRepositoryProvider);
     return FutureBuilder<List<Object>>(
       future: Future.wait<Object>([
-        repository.summary(classId: classId),
-        repository.unregistered(classId: classId),
+        repository.summary(date: attendanceDate, classId: classId),
+        repository.unregistered(date: attendanceDate, classId: classId),
       ]),
       builder: (context, snapshot) {
         final summary = snapshot.hasData

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
+import '../../models/academic_year.dart';
 import '../../models/school_class.dart';
 
 class BatchStudentManagementScreen extends ConsumerStatefulWidget {
@@ -20,7 +21,9 @@ class _BatchStudentManagementScreenState
   String? _targetGradeId;
   String? _deleteGradeId;
   String? _deleteStage;
+  String? _graduationGradeId;
   Map<String, String> _classMapping = {};
+  final _nextAcademicYear = TextEditingController();
   bool _busy = false;
 
   @override
@@ -33,7 +36,14 @@ class _BatchStudentManagementScreenState
     grades: await ref.read(classRepositoryProvider).getGrades(),
     classes: await ref.read(classRepositoryProvider).getClasses(),
     stages: await ref.read(studentRepositoryProvider).getActiveStages(),
+    academicYears: await ref.read(studentRepositoryProvider).getAcademicYears(),
   );
+
+  @override
+  void dispose() {
+    _nextAcademicYear.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) => Scaffold(
@@ -61,6 +71,124 @@ class _BatchStudentManagementScreenState
                   'كل عملية تتم داخل معاملة واحدة: إما تنجح كاملة أو لا يتغير أي طالب. يحتفظ التطبيق بسجل النقل والحضور السابق.',
             ),
             const SizedBox(height: 14),
+            _sectionTitle('سجل الأعوام الدراسية', Icons.history_edu_rounded),
+            const SizedBox(height: 8),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (data.academicYears.isEmpty)
+                      const Text(
+                        'حدد العام الدراسي الحالي من الإعدادات أولًا ليبدأ السجل.',
+                        style: TextStyle(color: AppColors.absent),
+                      )
+                    else
+                      for (final year in data.academicYears)
+                        ListTile(
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            year.isCurrent
+                                ? Icons.calendar_month_rounded
+                                : Icons.inventory_2_outlined,
+                            color: year.isCurrent
+                                ? AppColors.present
+                                : AppColors.blue,
+                          ),
+                          title: Text(
+                            year.label,
+                            style: const TextStyle(fontWeight: FontWeight.w900),
+                          ),
+                          subtitle: Text(
+                            year.isCurrent
+                                ? 'العام الحالي — ${year.activeStudents} طالب نشط'
+                                : 'عام سابق — ${year.activeStudents} طالب، ${year.graduatedStudents} متخرج${year.closedBy == null ? '' : ' — أغلقه ${year.closedBy}'}',
+                          ),
+                          trailing: year.isCurrent
+                              ? const Chip(label: Text('الحالي'))
+                              : const Chip(label: Text('محفوظ')),
+                        ),
+                    const Divider(height: 26),
+                    TextField(
+                      controller: _nextAcademicYear,
+                      enabled: !_busy,
+                      decoration: const InputDecoration(
+                        labelText: 'اسم العام الدراسي الجديد',
+                        hintText: 'مثال: 1448 / 1449 هـ',
+                        prefixIcon: Icon(Icons.edit_calendar_rounded),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    OutlinedButton.icon(
+                      onPressed: _busy ? null : () => _rolloverYear(data),
+                      icon: const Icon(Icons.archive_rounded),
+                      label: const Text('إغلاق العام الحالي وبدء العام الجديد'),
+                      style: OutlinedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(52),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            _sectionTitle('تخريج الصف السادس', Icons.school_rounded),
+            const SizedBox(height: 8),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'يُنقل طلاب الصف السادس إلى سجل «متخرج» ويختفون تمامًا من قوائم الطلاب النشطة والمسح، مع بقاء حضورهم وتقاريرهم السابقة محفوظة.',
+                      style: TextStyle(height: 1.5, color: Colors.blueGrey),
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      value: _graduationGradeId,
+                      decoration: const InputDecoration(
+                        labelText: 'الصف المراد تخريجه',
+                        prefixIcon: Icon(Icons.workspace_premium_outlined),
+                      ),
+                      items: _graduationGrades(data)
+                          .map(
+                            (grade) => DropdownMenuItem(
+                              value: grade.id,
+                              child: Text(grade.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: _busy
+                          ? null
+                          : (value) =>
+                                setState(() => _graduationGradeId = value),
+                    ),
+                    if (_graduationGradeId != null) ...[
+                      const SizedBox(height: 10),
+                      _BatchCount(gradeId: _graduationGradeId),
+                      const SizedBox(height: 10),
+                      FilledButton.icon(
+                        onPressed: _busy ? null : () => _graduateGrade(data),
+                        icon: const Icon(Icons.school_rounded),
+                        label: const Text('نقل الطلاب إلى متخرج وإخفاؤهم'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.navy,
+                          minimumSize: const Size.fromHeight(54),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 10),
+                    const Text(
+                      'بعد تخريج السادس استخدم الترحيل اليدوي أدناه لاختيار الصف الخامس ثم الصف السادس وربط الفصول كما هو معتاد.',
+                      style: TextStyle(fontSize: 12, color: AppColors.teal),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
             _sectionTitle('الترحيل السنوي', Icons.upgrade_rounded),
             const SizedBox(height: 8),
             Card(
@@ -322,6 +450,102 @@ class _BatchStudentManagementScreenState
     }
   }
 
+  List<SchoolGrade> _graduationGrades(_BatchData data) {
+    final sixth = data.grades.where((grade) {
+      final name = grade.name.trim().toLowerCase();
+      return name.contains('سادس') ||
+          RegExp(r'(^|\D)6($|\D)').hasMatch(name) ||
+          name.contains('٦');
+    }).toList();
+    return sixth.isEmpty ? data.grades : sixth;
+  }
+
+  Future<void> _graduateGrade(_BatchData data) async {
+    final gradeId = _graduationGradeId;
+    if (gradeId == null) return;
+    AcademicYearRecord? currentYear;
+    for (final year in data.academicYears) {
+      if (year.isCurrent) {
+        currentYear = year;
+        break;
+      }
+    }
+    if (currentYear == null) {
+      _showError('حدد العام الدراسي الحالي من الإعدادات قبل التخريج.');
+      return;
+    }
+    final gradeName = data.grades.firstWhere((g) => g.id == gradeId).name;
+    final confirmed = await _confirm(
+      title: 'تخريج طلاب $gradeName',
+      body:
+          'سيُنقل جميع الطلاب النشطين في $gradeName إلى سجل متخرج للعام ${currentYear.label}. سيختفون من قوائم الطلاب والمسح، ولن تُحذف تقاريرهم أو سجلات حضورهم السابقة.',
+      confirmLabel: 'تأكيد التخريج',
+    );
+    if (!confirmed) return;
+    await _run(() async {
+      final result = await ref
+          .read(studentRepositoryProvider)
+          .graduateGrade(
+            sourceGradeId: gradeId,
+            userId: ref.read(currentUserProvider)!.id,
+          );
+      refreshData(ref);
+      if (mounted) {
+        await _showSuccess(
+          'تم نقل ${result.graduated} طالبًا إلى متخرج وإخفاؤهم من القوائم النشطة.',
+        );
+        setState(() {
+          _graduationGradeId = null;
+          _data = _load();
+        });
+      }
+    });
+  }
+
+  Future<void> _rolloverYear(_BatchData data) async {
+    final next = _nextAcademicYear.text.trim();
+    if (next.isEmpty) {
+      _showError('أدخل اسم العام الدراسي الجديد.');
+      return;
+    }
+    AcademicYearRecord? currentYear;
+    for (final year in data.academicYears) {
+      if (year.isCurrent) {
+        currentYear = year;
+        break;
+      }
+    }
+    if (currentYear == null) {
+      _showError('حدد العام الدراسي الحالي من الإعدادات أولًا.');
+      return;
+    }
+    final confirmed = await _confirm(
+      title: 'إغلاق عام ${currentYear.label}',
+      body:
+          'سيُحفظ عام ${currentYear.label} في سجل الأعوام الماضية بإحصاءاته، ويصبح $next هو العام الحالي. نفّذ تخريج السادس وترحيل بقية الصفوف أولًا ثم تابع.',
+      confirmLabel: 'حفظ العام وبدء الجديد',
+    );
+    if (!confirmed) return;
+    await _run(() async {
+      await ref
+          .read(studentRepositoryProvider)
+          .rolloverAcademicYear(
+            nextLabel: next,
+            userId: ref.read(currentUserProvider)!.id,
+          );
+      refreshData(ref);
+      if (mounted) {
+        await _showSuccess(
+          'تم حفظ عام ${currentYear!.label} وبدء العام $next.',
+        );
+        setState(() {
+          _nextAcademicYear.clear();
+          _data = _load();
+        });
+      }
+    });
+  }
+
   Future<void> _promote(_BatchData data) async {
     final sourceId = _sourceGradeId;
     final targetId = _targetGradeId;
@@ -477,11 +701,13 @@ class _BatchData {
     required this.grades,
     required this.classes,
     required this.stages,
+    required this.academicYears,
   });
 
   final List<SchoolGrade> grades;
   final List<SchoolClass> classes;
   final List<String> stages;
+  final List<AcademicYearRecord> academicYears;
 }
 
 class _BatchCount extends ConsumerWidget {

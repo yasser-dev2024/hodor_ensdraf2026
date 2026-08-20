@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/providers.dart';
+import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
 import 'advanced_reports_screen.dart';
@@ -110,10 +111,8 @@ class ReportsScreen extends ConsumerWidget {
                             ),
                           ),
                           Text(
-                            DateFormat(
-                              'd MMMM yyyy',
-                              'ar',
-                            ).format(DateTime.now()),
+                            SchoolDayFormatter.dualLong(DateTime.now()),
+                            textAlign: TextAlign.end,
                             style: const TextStyle(
                               fontSize: 12,
                               color: Colors.blueGrey,
@@ -173,8 +172,8 @@ class ReportsScreen extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 10),
-          FutureBuilder<List<String>>(
-            future: repository.availableDates(),
+          FutureBuilder<List<AttendanceDayOverview>>(
+            future: repository.availableDays(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return const Card(
@@ -184,11 +183,11 @@ class ReportsScreen extends ConsumerWidget {
                   ),
                 );
               }
-              final dates = snapshot.data ?? const <String>[];
+              final days = snapshot.data ?? const <AttendanceDayOverview>[];
               if (!snapshot.hasData) {
                 return const Center(child: CircularProgressIndicator());
               }
-              if (dates.isEmpty) {
+              if (days.isEmpty) {
                 return const Card(
                   child: Padding(
                     padding: EdgeInsets.all(24),
@@ -199,8 +198,8 @@ class ReportsScreen extends ConsumerWidget {
                 );
               }
               return Column(
-                children: dates.map((date) {
-                  final parsed = DateTime.parse(date);
+                children: days.map((day) {
+                  final parsed = SchoolDayFormatter.parseKey(day.date);
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 8),
                     child: Card(
@@ -221,7 +220,10 @@ class ReportsScreen extends ConsumerWidget {
                           DateFormat('EEEE، d MMMM yyyy', 'ar').format(parsed),
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
-                        subtitle: const Text('تقرير الحضور الصباحي'),
+                        subtitle: Text(
+                          '${SchoolDayFormatter.hijriLong(parsed)}\n${day.isClosed ? 'مغلق' : 'مفتوح'} — ${day.recordCount} حالة${day.closedBy == null ? '' : ' — أغلقه ${day.closedBy}'}',
+                        ),
+                        isThreeLine: true,
                         trailing: const Icon(Icons.chevron_left_rounded),
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(

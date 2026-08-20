@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/app_database.dart';
+import '../models/academic_year.dart';
 import '../models/student.dart';
 import '../models/student_transfer.dart';
 import '../services/data_protection_service.dart';
@@ -65,7 +66,9 @@ class StudentRepository {
   }) async {
     final conditions = <String>[];
     final args = <Object?>[];
-    if (!includeInactive) conditions.add("s.status = 'active'");
+    conditions.add(
+      includeInactive ? "s.status <> 'graduated'" : "s.status = 'active'",
+    );
     if (classId != null) {
       conditions.add('s.class_id = ?');
       args.add(classId);
@@ -448,6 +451,9 @@ class StudentRepository {
     final old = await getById(id);
     if (old == null) throw StateError('الطالب غير موجود.');
     if (old.status == 'active') return;
+    if (old.status == 'graduated') {
+      throw StateError('الطالب متخرج ومحفوظ في سجل الخريجين ولا يعاد تفعيله.');
+    }
     final now = DateTime.now().toUtc().toIso8601String();
     await _database.db.transaction((txn) async {
       await txn.update(
@@ -541,6 +547,287 @@ class StudentRepository {
       );
       return rows.length;
     });
+  }
+
+  Future<List<AcademicYearRecord>> getAcademicYears() async {
+    final activeResult = await _database.db.rawQuery(
+      "SELECT COUNT(*) AS count FROM students WHERE status = 'active'",
+    );
+    final currentActive = activeResult.first['count'] as int;
+    final rows = await _database.db.rawQuery('''
+      SELECT ay.*, u.name AS closed_by_name,
+             (
+               SELECT COUNT(*) FROM student_graduations sg
+               WHERE sg.academic_year_label = ay.label
+             ) AS graduated_count
+      FROM academic_years ay
+      LEFT JOIN users u ON u.id = ay.closed_by
+      ORDER BY CASE ay.status WHEN 'current' THEN 0 ELSE 1 END,
+               ay.ended_at DESC,
+               ay.created_at DESC
+    ''');
+    return rows.map((row) {
+      final isCurrent = row['status'] == 'current';
+      Map<String, dynamic> summary = const {};
+      final encoded = row['summary_json'] as String?;
+      if (encoded != null) {
+        try {
+          summary = jsonDecode(encoded) as Map<String, dynamic>;
+        } catch (_) {
+          summary = const {};
+        }
+      }
+      return AcademicYearRecord(
+        id: row['id'] as String,
+        label: row['label'] as String,
+        isCurrent: isCurrent,
+        startedAt: DateTime.parse(row['started_at'] as String),
+        createdAt: DateTime.parse(row['created_at'] as String),
+        endedAt: row['ended_at'] == null
+            ? null
+            : DateTime.parse(row['ended_at'] as String),
+        closedBy: row['closed_by_name'] as String?,
+        activeStudents: isCurrent
+            ? currentActive
+            : (summary['active_students'] as int? ?? 0),
+        graduatedStudents: row['graduated_count'] as int,
+      );
+    }).toList();
+  }
+
+  Future<void> setCurrentAcademicYear({
+    required String label,
+    required String userId,
+  }) async {
+    await _requireManager(userId);
+    final normalized = _validateAcademicYearLabel(label);
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _database.db.transaction((txn) async {
+      final current = await txn.query(
+        'academic_years',
+        where: "status = 'current'",
+        limit: 1,
+      );
+      if (current.isEmpty) {
+        final existing = await txn.query(
+          'academic_years',
+          columns: const ['id'],
+          where: 'label = ?',
+          whereArgs: [normalized],
+          limit: 1,
+        );
+        if (existing.isNotEmpty) {
+          throw const FormatException(
+            'هذا العام موجود في السجل السابق ولا يمكن جعله عامًا حاليًا مرة أخرى.',
+          );
+        }
+        await txn.insert('academic_years', {
+          'id': _uuid.v4(),
+          'label': normalized,
+          'status': 'current',
+          'started_at': now,
+          'created_at': now,
+        });
+      } else {
+        final oldLabel = current.first['label'] as String;
+        if (oldLabel != normalized) {
+          final duplicate = await txn.query(
+            'academic_years',
+            columns: const ['id'],
+            where: 'label = ? AND id <> ?',
+            whereArgs: [normalized, current.first['id']],
+            limit: 1,
+          );
+          if (duplicate.isNotEmpty) {
+            throw const FormatException(
+              'اسم العام الجديد موجود مسبقًا في سجل الأعوام.',
+            );
+          }
+          await txn.update(
+            'academic_years',
+            {'label': normalized},
+            where: 'id = ?',
+            whereArgs: [current.first['id']],
+          );
+          await txn.update(
+            'student_graduations',
+            {'academic_year_label': normalized},
+            where: 'academic_year_label = ?',
+            whereArgs: [oldLabel],
+          );
+        }
+      }
+      await _setSetting(txn, 'academic_year', normalized, now);
+      await _audit(
+        txn,
+        'academic_year_set',
+        'academic_year',
+        normalized,
+        userId,
+        null,
+        {'label': normalized, 'status': 'current'},
+      );
+    });
+  }
+
+  Future<void> rolloverAcademicYear({
+    required String nextLabel,
+    required String userId,
+    DateTime? at,
+  }) async {
+    await _requireManager(userId);
+    final normalized = _validateAcademicYearLabel(nextLabel);
+    final now = (at ?? DateTime.now()).toUtc().toIso8601String();
+    await _database.db.transaction((txn) async {
+      final currentRows = await txn.query(
+        'academic_years',
+        where: "status = 'current'",
+        limit: 1,
+      );
+      if (currentRows.isEmpty) {
+        throw StateError('حدد العام الدراسي الحالي من الإعدادات أولًا.');
+      }
+      final current = currentRows.single;
+      final currentLabel = current['label'] as String;
+      if (currentLabel == normalized) {
+        throw const FormatException(
+          'العام الدراسي الجديد يجب أن يختلف عن الحالي.',
+        );
+      }
+      final duplicate = await txn.query(
+        'academic_years',
+        columns: const ['id'],
+        where: 'label = ?',
+        whereArgs: [normalized],
+        limit: 1,
+      );
+      if (duplicate.isNotEmpty) {
+        throw const FormatException('هذا العام موجود مسبقًا في سجل الأعوام.');
+      }
+      final active = await txn.rawQuery(
+        "SELECT COUNT(*) AS count FROM students WHERE status = 'active'",
+      );
+      final graduated = await txn.rawQuery(
+        '''
+        SELECT COUNT(*) AS count FROM student_graduations
+        WHERE academic_year_label = ?
+        ''',
+        [currentLabel],
+      );
+      final summary = {
+        'active_students': active.first['count'] as int,
+        'graduated_students': graduated.first['count'] as int,
+      };
+      await txn.update(
+        'academic_years',
+        {
+          'status': 'archived',
+          'ended_at': now,
+          'closed_by': userId,
+          'summary_json': jsonEncode(summary),
+        },
+        where: 'id = ?',
+        whereArgs: [current['id']],
+      );
+      await txn.insert('academic_years', {
+        'id': _uuid.v4(),
+        'label': normalized,
+        'status': 'current',
+        'started_at': now,
+        'created_at': now,
+      });
+      await _setSetting(txn, 'academic_year', normalized, now);
+      await _audit(
+        txn,
+        'academic_year_rollover',
+        'academic_year',
+        current['id'] as String,
+        userId,
+        {'label': currentLabel, 'status': 'current'},
+        {
+          'label': normalized,
+          'status': 'current',
+          'archived_year': currentLabel,
+          'summary': summary,
+        },
+      );
+    });
+  }
+
+  Future<GradeGraduationResult> graduateGrade({
+    required String sourceGradeId,
+    required String userId,
+    DateTime? at,
+  }) async {
+    await _requireManager(userId);
+    final yearRows = await _database.db.query(
+      'academic_years',
+      columns: const ['label'],
+      where: "status = 'current'",
+      limit: 1,
+    );
+    if (yearRows.isEmpty) {
+      throw StateError('حدد العام الدراسي الحالي من الإعدادات قبل التخريج.');
+    }
+    final academicYear = yearRows.single['label'] as String;
+    final students = await _database.db.query(
+      'students',
+      columns: const ['id', 'class_id'],
+      where: "status = 'active' AND grade_id = ?",
+      whereArgs: [sourceGradeId],
+    );
+    if (students.isEmpty) {
+      return const GradeGraduationResult(graduated: 0);
+    }
+    final now = (at ?? DateTime.now()).toUtc().toIso8601String();
+    await _database.db.transaction((txn) async {
+      for (final row in students) {
+        final studentId = row['id'] as String;
+        await txn.insert('student_graduations', {
+          'id': _uuid.v4(),
+          'student_id': studentId,
+          'grade_id': sourceGradeId,
+          'class_id': row['class_id'],
+          'academic_year_label': academicYear,
+          'graduated_at': now,
+          'graduated_by': userId,
+        });
+        await txn.update(
+          'students',
+          {
+            'status': 'graduated',
+            'transfer_status': 'graduated',
+            'deleted_at': now,
+            'updated_at': now,
+          },
+          where: 'id = ?',
+          whereArgs: [studentId],
+        );
+        await _audit(
+          txn,
+          'student_graduate',
+          'student',
+          studentId,
+          userId,
+          {'status': 'active', 'grade_id': sourceGradeId},
+          {'status': 'graduated', 'academic_year': academicYear},
+        );
+      }
+      await _audit(
+        txn,
+        'grade_graduation',
+        'student_batch',
+        sourceGradeId,
+        userId,
+        {'grade_id': sourceGradeId},
+        {
+          'status': 'graduated',
+          'academic_year': academicYear,
+          'count': students.length,
+        },
+      );
+    });
+    return GradeGraduationResult(graduated: students.length);
   }
 
   Future<GradePromotionResult> promoteGrade({
@@ -795,6 +1082,33 @@ class StudentRepository {
       deletedAt: row['deleted_at'] == null
           ? null
           : DateTime.parse(row['deleted_at'] as String),
+    );
+  }
+
+  static String _validateAcademicYearLabel(String value) {
+    final normalized = value.trim();
+    if (normalized.length < 3 || normalized.length > 40) {
+      throw const FormatException(
+        'اسم العام الدراسي يجب أن يكون بين 3 و40 حرفًا.',
+      );
+    }
+    return normalized;
+  }
+
+  static Future<void> _setSetting(
+    DatabaseExecutor db,
+    String key,
+    String value,
+    String updatedAt,
+  ) async {
+    await db.rawInsert(
+      '''
+      INSERT INTO settings(key, value, updated_at) VALUES(?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = excluded.updated_at
+      ''',
+      [key, value, updatedAt],
     );
   }
 

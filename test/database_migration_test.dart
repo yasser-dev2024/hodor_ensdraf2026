@@ -68,4 +68,50 @@ void main() {
       isNotEmpty,
     );
   });
+
+  test('يرقي قاعدة v2 إلى v3 ويحفظ العام الحالي في سجل الأعوام', () async {
+    final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    addTearDown(db.close);
+    await db.execute('PRAGMA foreign_keys = ON');
+    await db.execute('''
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE grades (id TEXT PRIMARY KEY)
+    ''');
+    await db.execute('''
+      CREATE TABLE classes (id TEXT PRIMARY KEY)
+    ''');
+    await db.execute('''
+      CREATE TABLE students (id TEXT PRIMARY KEY)
+    ''');
+    await db.execute('''
+      CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    ''');
+    await db.insert('settings', {
+      'key': 'academic_year',
+      'value': '1447 / 1448 هـ',
+      'updated_at': '2026-08-20T05:00:00.000Z',
+    });
+
+    await AppDatabase.upgradeSchemaForTesting(db, 2, 3);
+
+    final years = await db.query('academic_years');
+    expect(years, hasLength(1));
+    expect(years.single['label'], '1447 / 1448 هـ');
+    expect(years.single['status'], 'current');
+    expect(
+      await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'student_graduations'",
+      ),
+      isNotEmpty,
+    );
+  });
 }
