@@ -6,7 +6,7 @@ class AppDatabase {
 
   Database db;
   final String? path;
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   static Future<AppDatabase> open() async {
     final root = await getDatabasesPath();
@@ -115,6 +115,23 @@ class AppDatabase {
         ''');
       });
     }
+    if (oldVersion < 4 && newVersion >= 4) {
+      await db.transaction((txn) async {
+        await txn.execute('''
+          CREATE TABLE IF NOT EXISTS student_barcode_aliases (
+            token TEXT PRIMARY KEY,
+            student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+            source TEXT NOT NULL CHECK(source IN ('migration','manual','national_id_change')),
+            created_at TEXT NOT NULL,
+            created_by TEXT REFERENCES users(id) ON DELETE SET NULL
+          )
+        ''');
+        await txn.execute('''
+          CREATE INDEX IF NOT EXISTS idx_student_barcode_aliases_student
+          ON student_barcode_aliases(student_id)
+        ''');
+      });
+    }
   }
 
   static Future<void> _createSchema(Database db) async {
@@ -184,6 +201,15 @@ class AppDatabase {
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           deleted_at TEXT
+        )
+      ''');
+      await txn.execute('''
+        CREATE TABLE student_barcode_aliases (
+          token TEXT PRIMARY KEY,
+          student_id TEXT NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+          source TEXT NOT NULL CHECK(source IN ('migration','manual','national_id_change')),
+          created_at TEXT NOT NULL,
+          created_by TEXT REFERENCES users(id) ON DELETE SET NULL
         )
       ''');
       await txn.execute('''
@@ -291,6 +317,10 @@ class AppDatabase {
       await txn.execute(
         'CREATE INDEX idx_students_barcode_token ON students(barcode_token)',
       );
+      await txn.execute('''
+        CREATE INDEX idx_student_barcode_aliases_student
+        ON student_barcode_aliases(student_id)
+      ''');
       await txn.execute(
         'CREATE INDEX idx_attendance_student_id ON attendance(student_id)',
       );

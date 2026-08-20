@@ -114,4 +114,28 @@ void main() {
       isNotEmpty,
     );
   });
+
+  test('يرقي قاعدة v3 إلى v4 ويضيف توافق الباركود القديم', () async {
+    final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    addTearDown(db.close);
+    await db.execute('PRAGMA foreign_keys = ON');
+    await db.execute('CREATE TABLE users (id TEXT PRIMARY KEY)');
+    await db.execute('CREATE TABLE students (id TEXT PRIMARY KEY)');
+
+    await AppDatabase.upgradeSchemaForTesting(db, 3, 4);
+
+    expect(
+      await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'student_barcode_aliases'",
+      ),
+      isNotEmpty,
+    );
+    final columns = await db.rawQuery(
+      'PRAGMA table_info(student_barcode_aliases)',
+    );
+    expect(
+      columns.map((row) => row['name']),
+      containsAll(['token', 'student_id', 'source', 'created_by']),
+    );
+  });
 }

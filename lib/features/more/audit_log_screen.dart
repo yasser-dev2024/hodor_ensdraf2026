@@ -64,6 +64,7 @@ class AuditLogScreen extends ConsumerWidget {
         'student_reactivate': 'إعادة تفعيل طالب',
         'student_batch_deactivate': 'تعطيل دفعة طلاب',
         'student_transfer': 'نقل طالب',
+        'student_barcode_bind': 'ربط باركود قديم بطالب',
         'grade_promotion': 'ترحيل سنوي لصف كامل',
         'student_graduate': 'تخريج طالب',
         'grade_graduation': 'تخريج صف كامل',

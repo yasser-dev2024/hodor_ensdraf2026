@@ -237,7 +237,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                           style: TextStyle(fontWeight: FontWeight.w900),
                         ),
                         subtitle: Text(
-                          'الرمز آمن دائمًا ولا يحتوي على السجل المدني الخام.',
+                          'الرمز ثابت بعد إعادة التثبيت ولا يحتوي على السجل المدني الخام.',
                         ),
                       ),
                       SwitchListTile(

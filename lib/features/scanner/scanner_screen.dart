@@ -11,6 +11,7 @@ import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
 import '../../models/student.dart';
+import '../../services/data_protection_service.dart';
 import '../students/student_photo.dart';
 
 enum _ExistingAction { nextStudent, changeStatus, departure }
@@ -220,10 +221,19 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         return;
       }
       await _controller.stop();
-      final student = await ref
+      var student = await ref
           .read(studentRepositoryProvider)
           .getByBarcode(token);
       if (!mounted) return;
+      if (student == null &&
+          DataProtectionService.isLegacyBarcodeToken(token)) {
+        student = await _recoverLegacyBarcode(token);
+        if (!mounted) return;
+        if (student == null) {
+          await _restartScanner();
+          return;
+        }
+      }
       if (student == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -269,6 +279,96 @@ class _ScannerScreenState extends ConsumerState<ScannerScreen> {
         );
       }
       await _restartScanner();
+    }
+  }
+
+  Future<Student?> _recoverLegacyBarcode(String token) async {
+    final user = ref.read(currentUserProvider)!;
+    if (!user.role.canManage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'هذا باركود قديم فقد ارتباطه بعد حذف البيانات. اطلب من المدير ربطه بالطالب مرة واحدة.',
+          ),
+          backgroundColor: AppColors.excused,
+        ),
+      );
+      return null;
+    }
+    final nationalId = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.link_rounded, color: AppColors.blue),
+            SizedBox(width: 8),
+            Expanded(child: Text('استرداد باركود قديم')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'تعذر معرفة صاحب الرمز العشوائي بعد حذف قاعدة البيانات. أدخل السجل المدني الصحيح للطالب لربط البطاقة القديمة مرة واحدة.',
+              style: TextStyle(height: 1.55),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: nationalId,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              maxLength: 10,
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9٠-٩]')),
+              ],
+              decoration: const InputDecoration(
+                labelText: 'السجل المدني للطالب',
+                prefixIcon: Icon(Icons.badge_outlined),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(context, nationalId.text),
+            icon: const Icon(Icons.link_rounded),
+            label: const Text('ربط ومتابعة'),
+          ),
+        ],
+      ),
+    );
+    nationalId.dispose();
+    if (value == null || !mounted) return null;
+    try {
+      final student = await ref
+          .read(studentRepositoryProvider)
+          .bindLegacyBarcode(token: token, nationalId: value, userId: user.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تم ربط البطاقة القديمة بالطالب ${student.name}.'),
+            backgroundColor: AppColors.present,
+          ),
+        );
+      }
+      return student;
+    } catch (error) {
+      if (mounted) {
+        final message = '$error'
+            .replaceFirst('FormatException: ', '')
+            .replaceFirst('Bad state: ', '');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message), backgroundColor: AppColors.absent),
+        );
+      }
+      return null;
     }
   }
 

@@ -64,6 +64,7 @@ class StudentRepository {
     String? classId,
     bool includeInactive = false,
   }) async {
+    await _ensureStableBarcodeTokens();
     final conditions = <String>[];
     final args = <Object?>[];
     conditions.add(
@@ -89,6 +90,7 @@ class StudentRepository {
         'g.name LIKE ?',
         'c.name LIKE ?',
         's.barcode_token = ?',
+        'EXISTS (SELECT 1 FROM student_barcode_aliases ba WHERE ba.student_id = s.id AND ba.token = ?)',
       ];
       args.addAll([
         '%$cleaned%',
@@ -96,6 +98,7 @@ class StudentRepository {
         '%$cleaned%',
         '%$cleaned%',
         '%$cleaned%',
+        cleaned,
         cleaned,
       ]);
       // البحث بالسجل الكامل يتم بواسطة Hash ثابت، ولا يفك تشفير سجلات الطلاب.
@@ -117,6 +120,7 @@ class StudentRepository {
   }
 
   Future<Student?> getById(String id) async {
+    await _ensureStableBarcodeTokens();
     final rows = await _database.db.rawQuery(
       '''
       SELECT s.*, g.name AS grade_name, c.name AS class_name
@@ -131,6 +135,7 @@ class StudentRepository {
   }
 
   Future<Student?> getByBarcode(String token) async {
+    await _ensureStableBarcodeTokens();
     final cleaned = token.trim();
     if (!RegExp(r'^stu_[A-Za-z0-9_-]{20,80}$').hasMatch(cleaned)) return null;
     final rows = await _database.db.rawQuery(
@@ -139,11 +144,83 @@ class StudentRepository {
       FROM students s
       LEFT JOIN grades g ON g.id = s.grade_id
       LEFT JOIN classes c ON c.id = s.class_id
-      WHERE s.barcode_token = ? AND s.status = 'active' LIMIT 1
+      WHERE s.status = 'active'
+        AND (
+          s.barcode_token = ? OR EXISTS (
+            SELECT 1 FROM student_barcode_aliases ba
+            WHERE ba.student_id = s.id AND ba.token = ?
+          )
+        )
+      LIMIT 1
     ''',
-      [cleaned],
+      [cleaned, cleaned],
     );
     return rows.isEmpty ? null : _fromRow(rows.first);
+  }
+
+  Future<Student> bindLegacyBarcode({
+    required String token,
+    required String nationalId,
+    required String userId,
+  }) async {
+    await _requireManager(userId);
+    await _ensureStableBarcodeTokens();
+    final cleanedToken = token.trim();
+    if (!DataProtectionService.isLegacyBarcodeToken(cleanedToken)) {
+      throw const FormatException('هذا الرمز ليس باركودًا قديمًا صالحًا.');
+    }
+    final normalizedId = DataProtectionService.normalizeNationalId(nationalId);
+    if (!RegExp(r'^\d{10}$').hasMatch(normalizedId)) {
+      throw const FormatException('أدخل السجل المدني المكون من 10 أرقام.');
+    }
+    final idHash = await _protection.searchableHash(normalizedId);
+    final studentRows = await _database.db.query(
+      'students',
+      columns: const ['id'],
+      where: "national_id_hash = ? AND status = 'active'",
+      whereArgs: [idHash],
+      limit: 1,
+    );
+    if (studentRows.isEmpty) {
+      throw StateError('لم يوجد طالب نشط بهذا السجل المدني.');
+    }
+    final studentId = studentRows.first['id'] as String;
+    final existing = await getByBarcode(cleanedToken);
+    if (existing != null) {
+      if (existing.id != studentId) {
+        throw StateError('هذا الباركود مرتبط بطالب آخر بالفعل.');
+      }
+      return existing;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    try {
+      await _database.db.transaction((txn) async {
+        await txn.insert('student_barcode_aliases', {
+          'token': cleanedToken,
+          'student_id': studentId,
+          'source': 'manual',
+          'created_at': now,
+          'created_by': userId,
+        });
+        await _audit(
+          txn,
+          'student_barcode_bind',
+          'student',
+          studentId,
+          userId,
+          null,
+          {'source': 'legacy_card'},
+        );
+      });
+    } on DatabaseException catch (error) {
+      if (!error.isUniqueConstraintError()) rethrow;
+      final resolved = await getByBarcode(cleanedToken);
+      if (resolved == null || resolved.id != studentId) {
+        throw StateError('هذا الباركود مرتبط بطالب آخر بالفعل.');
+      }
+      return resolved;
+    }
+    return (await getById(studentId))!;
   }
 
   Future<bool> nationalIdExists(
@@ -367,9 +444,19 @@ class StudentRepository {
     }
     final encrypted = await _protection.encrypt(normalized);
     final hash = await _protection.searchableHash(normalized);
+    final barcodeToken = await _protection.stableBarcodeToken(normalized);
     final now = DateTime.now().toUtc().toIso8601String();
     try {
       await _database.db.transaction((txn) async {
+        if (old.barcodeToken != barcodeToken) {
+          await txn.insert('student_barcode_aliases', {
+            'token': old.barcodeToken,
+            'student_id': student.id,
+            'source': 'national_id_change',
+            'created_at': now,
+            'created_by': userId,
+          }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        }
         await txn.update(
           'students',
           {
@@ -381,6 +468,7 @@ class StudentRepository {
             'grade_id': resolvedGradeId,
             'class_id': student.classId,
             'academic_number': _emptyToNull(student.academicNumber),
+            'barcode_token': barcodeToken,
             'photo_path': _emptyToNull(student.photoPath),
             'status': student.status,
             'transfer_status': student.transferStatus,
@@ -1052,7 +1140,7 @@ class StudentRepository {
       'grade_id': gradeId,
       'class_id': classId,
       'academic_number': _emptyToNull(academicNumber),
-      'barcode_token': _protection.newBarcodeToken(),
+      'barcode_token': await _protection.stableBarcodeToken(nationalId),
       'photo_path': _emptyToNull(photoPath),
       'status': 'active',
       'created_at': createdAt.toIso8601String(),
@@ -1083,6 +1171,55 @@ class StudentRepository {
           ? null
           : DateTime.parse(row['deleted_at'] as String),
     );
+  }
+
+  Future<void> _ensureStableBarcodeTokens() => _migrateLegacyBarcodeTokens();
+
+  Future<void> _migrateLegacyBarcodeTokens() async {
+    final rows = await _database.db.query(
+      'students',
+      columns: const ['id', 'national_id_encrypted', 'barcode_token'],
+      where: "barcode_token NOT LIKE 'stu_v2_%'",
+    );
+    if (rows.isEmpty) return;
+    final prepared = <(String, String, String)>[];
+    const batchSize = 128;
+    for (var offset = 0; offset < rows.length; offset += batchSize) {
+      final end = (offset + batchSize).clamp(0, rows.length);
+      final batch = rows.sublist(offset, end);
+      prepared.addAll(
+        await Future.wait(
+          batch.map((row) async {
+            final nationalId = await _protection.decrypt(
+              row['national_id_encrypted'] as String,
+            );
+            return (
+              row['id'] as String,
+              row['barcode_token'] as String,
+              await _protection.stableBarcodeToken(nationalId),
+            );
+          }),
+        ),
+      );
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _database.db.transaction((txn) async {
+      for (final item in prepared) {
+        await txn.insert('student_barcode_aliases', {
+          'token': item.$2,
+          'student_id': item.$1,
+          'source': 'migration',
+          'created_at': now,
+          'created_by': null,
+        }, conflictAlgorithm: ConflictAlgorithm.ignore);
+        await txn.update(
+          'students',
+          {'barcode_token': item.$3},
+          where: 'id = ? AND barcode_token = ?',
+          whereArgs: [item.$1, item.$2],
+        );
+      }
+    });
   }
 
   static String _validateAcademicYearLabel(String value) {

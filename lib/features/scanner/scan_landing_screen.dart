@@ -282,7 +282,7 @@ class _ScanLandingScreenState extends ConsumerState<ScanLandingScreen> {
                   SizedBox(width: 11),
                   Expanded(
                     child: Text(
-                      'يتوقف الماسح فور قراءة الرمز، ويمنع تسجيل الطالب مرتين في اليوم. رمز QR لا يكشف السجل المدني.',
+                      'يتوقف الماسح فور قراءة الرمز، ويمنع تسجيل الطالب مرتين في اليوم. رمز QR ثابت بين النسخ ولا يكشف السجل المدني.',
                       style: TextStyle(height: 1.55),
                     ),
                   ),

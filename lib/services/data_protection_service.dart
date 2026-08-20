@@ -12,6 +12,13 @@ class DataProtectionService {
   Uint8List _keyBytes;
   final _cipher = AesGcm.with256bits();
   final _hmac = Hmac.sha256();
+  // This namespace key is intentionally installation-independent and must
+  // never be rotated: changing it would invalidate every printed v2 card.
+  // It keeps the civil ID out of the QR payload, while the per-installation
+  // key above continues to protect the stored student data.
+  static final SecretKey _barcodeDerivationKey = SecretKey(
+    utf8.encode('sa.school.attendance.permanent-student-card.v2.2026'),
+  );
 
   static Future<DataProtectionService> create() async {
     const storage = FlutterSecureStorage();
@@ -81,8 +88,26 @@ class DataProtectionService {
   }
 
   String newSalt() => base64UrlEncode(_secureBytes(16));
-  String newBarcodeToken() =>
-      'stu_${base64UrlEncode(_secureBytes(24)).replaceAll('=', '')}';
+  Future<String> stableBarcodeToken(String nationalId) async {
+    final normalized = normalizeNationalId(nationalId);
+    if (!RegExp(r'^\d{10}$').hasMatch(normalized)) {
+      throw const FormatException('السجل المدني غير صالح لإنشاء الباركود.');
+    }
+    final mac = await _hmac.calculateMac(
+      utf8.encode('student:$normalized'),
+      secretKey: _barcodeDerivationKey,
+    );
+    return 'stu_v2_${base64UrlEncode(mac.bytes).replaceAll('=', '')}';
+  }
+
+  static bool isStableBarcodeToken(String value) =>
+      RegExp(r'^stu_v2_[A-Za-z0-9_-]{43}$').hasMatch(value.trim());
+
+  static bool isLegacyBarcodeToken(String value) {
+    final token = value.trim();
+    return !isStableBarcodeToken(token) &&
+        RegExp(r'^stu_[A-Za-z0-9_-]{20,80}$').hasMatch(token);
+  }
 
   Uint8List exportKeyForEncryptedBackup() => Uint8List.fromList(_keyBytes);
 

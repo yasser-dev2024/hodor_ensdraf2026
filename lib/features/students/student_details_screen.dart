@@ -208,7 +208,7 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                             ),
                             SizedBox(height: 6),
                             Text(
-                              'لا يحتوي هذا الرمز على السجل المدني، بل على توكن داخلي عشوائي وفريد.',
+                              'رمز ثابت مشتق من السجل المدني دون إظهاره؛ يعاد إنشاؤه نفسه بعد إعادة تثبيت التطبيق واستيراد الطالب.',
                               style: TextStyle(
                                 fontSize: 12,
                                 height: 1.5,

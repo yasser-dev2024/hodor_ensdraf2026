@@ -93,6 +93,14 @@ void main() {
       throwsA(isA<StateError>()),
     );
     expect(
+      () => students.bindLegacyBarcode(
+        token: 'stu_abcdefghijklmnopqrstuvwxyz012345',
+        nationalId: student.nationalId,
+        userId: attendanceOfficer.id,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
       () => classes.addGrade('صف ممنوع', userId: attendanceOfficer.id),
       throwsA(isA<StateError>()),
     );
@@ -125,16 +133,86 @@ void main() {
     );
   });
 
-  test('رمز QR آمن وفريد ويسترجع الطالب دون كشف السجل', () async {
+  test('رمز QR ثابت بين التثبيتات ويسترجع الطالب دون كشف السجل', () async {
     final student = await students.create(
       name: 'سلمان محمد',
       nationalId: '1098765432',
       userId: managerId,
     );
 
-    expect(student.barcodeToken, startsWith('stu_'));
+    final protectionAfterReinstall = DataProtectionService.forTesting(
+      List<int>.generate(32, (index) => 255 - index),
+    );
+    expect(student.barcodeToken, startsWith('stu_v2_'));
     expect(student.barcodeToken, isNot(contains(student.nationalId)));
+    expect(
+      await protectionAfterReinstall.stableBarcodeToken('١٠٩٨٧٦٥٤٣٢'),
+      student.barcodeToken,
+    );
     expect((await students.getByBarcode(student.barcodeToken))?.id, student.id);
+  });
+
+  test('يرقي الرمز العشوائي ويحفظه كاسم بديل للبطاقة القديمة', () async {
+    final student = await students.create(
+      name: 'صاحب بطاقة قديمة',
+      nationalId: '1087654321',
+      userId: managerId,
+    );
+    const legacyToken = 'stu_0123456789abcdefghijklmnopqrstuv';
+    await database.db.update(
+      'students',
+      {'barcode_token': legacyToken},
+      where: 'id = ?',
+      whereArgs: [student.id],
+    );
+
+    final repositoryAfterUpgrade = StudentRepository(database, protection);
+    final upgraded = await repositoryAfterUpgrade.getById(student.id);
+
+    expect(upgraded?.barcodeToken, startsWith('stu_v2_'));
+    expect(
+      (await repositoryAfterUpgrade.getByBarcode(legacyToken))?.id,
+      student.id,
+    );
+    final aliases = await database.db.query(
+      'student_barcode_aliases',
+      where: 'token = ?',
+      whereArgs: [legacyToken],
+    );
+    expect(aliases.single['source'], 'migration');
+  });
+
+  test('يسمح للمدير بربط بطاقة عشوائية بعد فقد قاعدة البيانات', () async {
+    final student = await students.create(
+      name: 'طالب أعيد استيراده',
+      nationalId: '1076543298',
+      userId: managerId,
+    );
+    const oldPrintedToken = 'stu_abcdefghijklmnopqrstuvwxyz012345';
+
+    final linked = await students.bindLegacyBarcode(
+      token: oldPrintedToken,
+      nationalId: '١٠٧٦٥٤٣٢٩٨',
+      userId: managerId,
+    );
+
+    expect(linked.id, student.id);
+    expect((await students.getByBarcode(oldPrintedToken))?.id, student.id);
+    expect(student.barcodeToken, startsWith('stu_v2_'));
+
+    await students.create(
+      name: 'طالب آخر',
+      nationalId: '1065432198',
+      userId: managerId,
+    );
+    expect(
+      () => students.bindLegacyBarcode(
+        token: oldPrintedToken,
+        nationalId: '1065432198',
+        userId: managerId,
+      ),
+      throwsA(isA<StateError>()),
+    );
   });
 
   test('يمنع تسجيل الطالب مرتين في اليوم', () async {
