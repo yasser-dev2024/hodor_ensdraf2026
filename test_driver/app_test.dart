@@ -27,6 +27,8 @@ void main() {
 
         await driver.waitFor(find.byValueKey('nav_home'), timeout: wait);
         await driver.waitFor(find.text('بدء تسجيل الحضور'), timeout: wait);
+        await driver.waitFor(find.text('رادار الفصول'), timeout: wait);
+        await driver.waitFor(find.text('اكتمال تحضير المدرسة'), timeout: wait);
 
         await driver.tap(find.byValueKey('nav_reports'));
         await driver.waitFor(find.text('تقرير اليوم الحالي'), timeout: wait);
@@ -51,6 +53,12 @@ void main() {
         );
         await driver.tap(find.text('الترحيل السنوي وإدارة الدفعات'));
         await driver.waitFor(find.text('الترحيل السنوي'), timeout: wait);
+        await driver.scrollUntilVisible(
+          find.byValueKey('batch_management_scroll'),
+          find.text('تعطيل دفعة كاملة'),
+          dyScroll: -450,
+          timeout: wait,
+        );
         await driver.waitFor(find.text('تعطيل دفعة كاملة'), timeout: wait);
       },
       timeout: const Timeout(Duration(minutes: 8)),

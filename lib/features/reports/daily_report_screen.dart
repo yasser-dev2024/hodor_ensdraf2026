@@ -8,7 +8,11 @@ import '../../core/providers.dart';
 import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
+import '../../models/daily_preparation.dart';
 import '../../models/period_report.dart';
+import '../scanner/scanner_screen.dart';
+import '../students/student_details_screen.dart';
+import 'daily_review_sheet.dart';
 
 class DailyReportScreen extends ConsumerStatefulWidget {
   const DailyReportScreen({required this.date, super.key});
@@ -194,6 +198,15 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
                     ),
                   const SizedBox(height: 13),
                   _DailyReportAction(
+                    color: AppColors.blue,
+                    icon: Icons.fact_check_outlined,
+                    title: 'راجع لي اليوم',
+                    subtitle:
+                        'يفحص الاكتمال والتعارضات والبيانات الناقصة دون تعديل أي سجل',
+                    onTap: _busy ? null : _reviewDay,
+                  ),
+                  const SizedBox(height: 9),
+                  _DailyReportAction(
                     color: const Color(0xFFB3261E),
                     icon: Icons.picture_as_pdf_rounded,
                     title: 'مشاركة التقرير بصيغة PDF',
@@ -319,6 +332,58 @@ class _DailyReportScreenState extends ConsumerState<DailyReportScreen> {
             as List<Map<String, Object?>>;
     final day = await repository.dayOverview(_dateKey) as AttendanceDayOverview;
     return (summary, records, unregistered, day);
+  }
+
+  Future<void> _reviewDay() async {
+    await _run(() async {
+      final result = await ref
+          .read(dailyPreparationServiceProvider)
+          .review(widget.date);
+      if (!mounted) return;
+      final selected = await showModalBottomSheet<DailyReviewIssue>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        backgroundColor: Colors.white,
+        builder: (sheetContext) => DailyReviewSheet(
+          result: result,
+          onIssueTap: (issue) => Navigator.pop(sheetContext, issue),
+        ),
+      );
+      if (selected != null && mounted) {
+        await _openReviewIssue(selected);
+      }
+    });
+  }
+
+  Future<void> _openReviewIssue(DailyReviewIssue issue) async {
+    if (issue.studentId != null) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => StudentDetailsScreen(studentId: issue.studentId!),
+        ),
+      );
+      if (mounted) refreshData(ref);
+      return;
+    }
+    if (issue.classId == null) return;
+    final user = ref.read(currentUserProvider)!;
+    if (!user.role.canScan) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية فتح مسار تحضير الفصل.')),
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ScannerScreen(
+          attendanceDate: _dateKey,
+          classId: issue.classId,
+          classLabel: issue.classLabel,
+        ),
+      ),
+    );
+    if (mounted) refreshData(ref);
   }
 
   Future<void> _sharePdf(

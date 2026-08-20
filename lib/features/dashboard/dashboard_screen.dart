@@ -5,10 +5,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/providers.dart';
+import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
+import '../../models/daily_preparation.dart';
 import '../../models/period_report.dart';
 import '../reports/daily_report_screen.dart';
+import '../scanner/scanner_screen.dart';
+import 'smart_preparation_section.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({required this.onStartScan, super.key});
@@ -41,6 +45,9 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     ref.watch(dataRevisionProvider);
     final user = ref.watch(currentUserProvider)!;
     final summaryFuture = ref.read(attendanceRepositoryProvider).summary();
+    final preparationFuture = ref
+        .read(dailyPreparationServiceProvider)
+        .load(_now);
     final analyticsFuture = ref
         .read(reportRepositoryProvider)
         .analytics(startDate: DateTime(_now.year, _now.month), endDate: _now);
@@ -118,6 +125,51 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
                   ),
                 ),
               ],
+            ),
+            const SizedBox(height: 14),
+            FutureBuilder<DailyPreparationSnapshot>(
+              future: preparationFuture,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.info_outline_rounded,
+                            color: AppColors.excused,
+                          ),
+                          const SizedBox(width: 10),
+                          const Expanded(
+                            child: Text(
+                              'تعذر تحميل مؤشرات التحضير الذكية الآن. بيانات الحضور الأساسية لم تتأثر.',
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'إعادة المحاولة',
+                            onPressed: () => setState(() {}),
+                            icon: const Icon(Icons.refresh_rounded),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }
+                if (!snapshot.hasData) {
+                  return const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(22),
+                      child: Center(child: CircularProgressIndicator()),
+                    ),
+                  );
+                }
+                return SmartPreparationSection(
+                  snapshot: snapshot.data!,
+                  now: _now,
+                  onClassTap: _openClassPreparation,
+                );
+              },
             ),
             const SizedBox(height: 22),
             FutureBuilder<DailySummary>(
@@ -327,6 +379,46 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _openClassPreparation(ClassPreparationStatus item) async {
+    final user = ref.read(currentUserProvider)!;
+    if (!user.role.canScan) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا تملك صلاحية تسجيل الحضور.')),
+      );
+      return;
+    }
+    final date = SchoolDayFormatter.dateOnly(_now);
+    final dateKey = SchoolDayFormatter.key(date);
+    try {
+      final day = await ref
+          .read(attendanceRepositoryProvider)
+          .dayOverview(dateKey);
+      if (!mounted) return;
+      if (day.isClosed) {
+        await Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => DailyReportScreen(date: date)),
+        );
+      } else {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ScannerScreen(
+              attendanceDate: dateKey,
+              classId: item.classId,
+              classLabel: item.label,
+            ),
+          ),
+        );
+      }
+      if (mounted) refreshData(ref);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('تعذر فتح الفصل: $error')));
+      }
+    }
   }
 }
 

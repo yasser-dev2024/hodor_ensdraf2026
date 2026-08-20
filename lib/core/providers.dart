@@ -12,6 +12,7 @@ import '../repositories/report_repository.dart';
 import '../services/backup_service.dart';
 import '../services/activation_service.dart';
 import '../services/data_protection_service.dart';
+import '../services/daily_preparation_service.dart';
 import '../services/image_storage_service.dart';
 import '../services/import_service.dart';
 import '../services/report_service.dart';
@@ -62,6 +63,12 @@ final imageStorageProvider = Provider<ImageStorageService>(
   (ref) => ImageStorageService(),
 );
 final reportServiceProvider = Provider<ReportService>((ref) => ReportService());
+final dailyPreparationServiceProvider = Provider<DailyPreparationService>(
+  (ref) => DailyPreparationService(
+    ref.watch(databaseProvider),
+    ref.watch(attendanceRepositoryProvider),
+  ),
+);
 final importServiceProvider = Provider<StudentImportService>(
   (ref) => StudentImportService(
     database: ref.watch(databaseProvider),

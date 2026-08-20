@@ -62,6 +62,7 @@ class _BatchStudentManagementScreenState
         }
         final data = snapshot.data!;
         return ListView(
+          key: const ValueKey('batch_management_scroll'),
           padding: const EdgeInsets.fromLTRB(18, 8, 18, 28),
           children: [
             _InfoBanner(
