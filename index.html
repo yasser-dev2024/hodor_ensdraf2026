@@ -21,6 +21,9 @@
       a.button { color:#fff; background:var(--blue); }
       a.button:hover { background:#105b89; }
       .disabled { color:#667; background:#e8edef; cursor:not-allowed; }
+      .whats-new { margin-top:22px; padding:20px; border:1px solid #cfe5df; border-radius:18px; background:#f3fbf8; }
+      .whats-new h2 { margin:0 0 12px; color:var(--teal); font-size:20px; }
+      .whats-new ul { margin:0; padding-inline-start:22px; display:grid; gap:8px; line-height:1.7; }
       dl { display:grid; grid-template-columns:auto 1fr; gap:9px 16px; margin:24px 0 0; padding-top:20px; border-top:1px solid #e2eaed; font-size:14px; }
       dt { color:#6c8290; } dd { margin:0; font-weight:700; overflow-wrap:anywhere; }
       .steps { margin-top:22px; padding:17px 20px; background:#f2f8fa; border-radius:16px; line-height:1.9; }
@@ -38,7 +41,7 @@
         <article class="download">
           <h2>تحميل Android</h2>
           <p>ملف APK مستقر ومباشر للهواتف والأجهزة اللوحية بنظام Android.</p>
-          <a class="button" href="releases/morning-attendance-v1.4.0.apk?v=B129B35ADB2D16D712BEEE77B298A5D7ECB5C706FDAFEA987C830E74EB489793" download>تحميل APK</a>
+          <a class="button" href="releases/morning-attendance-v1.5.0.apk?v=FFEA5836050082F76AD4A4CD1BF4D6CB42EE25CD54CFAFEBFE5C1606CB2E9990" download>تحميل APK</a>
         </article>
         <article class="download">
           <h2>تحميل iPhone وiPad</h2>
@@ -47,11 +50,22 @@
         </article>
       </section>
 
+      <section class="whats-new" aria-labelledby="whats-new-title">
+        <h2 id="whats-new-title">الجديد في الإصدار 1.5.0</h2>
+        <ul>
+          <li>مؤشر اكتمال التحضير والواجهة الصباحية الذكية.</li>
+          <li>رادار لحظي لمتابعة حالة جميع الفصول.</li>
+          <li>مراجعة بيانات اليوم والتنبيه إلى التعارضات دون تعديلها.</li>
+          <li>بطاقة «بصمة اليوم» مع الحفظ والمشاركة بصيغة PNG.</li>
+          <li>تحسينات توافق الجوال مع المحافظة على نظام الحضور والتقارير الحالي.</li>
+        </ul>
+      </section>
+
       <dl>
-        <dt>الإصدار</dt><dd id="app-version">1.4.0 (7)</dd>
-        <dt>تاريخ التحديث</dt><dd id="release-date">2026-08-20</dd>
-        <dt>حجم Android</dt><dd id="apk-size">92.3 MB</dd>
-        <dt>SHA-256</dt><dd id="apk-sha256">B129B35ADB2D16D712BEEE77B298A5D7ECB5C706FDAFEA987C830E74EB489793</dd>
+        <dt>الإصدار</dt><dd id="app-version">1.5.0 (8)</dd>
+        <dt>تاريخ التحديث</dt><dd id="release-date">2026-08-21</dd>
+        <dt>حجم Android</dt><dd id="apk-size">92.5 MB</dd>
+        <dt>SHA-256</dt><dd id="apk-sha256">FFEA5836050082F76AD4A4CD1BF4D6CB42EE25CD54CFAFEBFE5C1606CB2E9990</dd>
       </dl>
 
       <div class="steps"><strong>تثبيت Android:</strong> نزّل الملف، وافتحه، واسمح بالتثبيت من هذا المصدر عند طلب النظام. احتفظ بنسخة بيانات مشفرة قبل أي تحديث مستقبلي.</div>
