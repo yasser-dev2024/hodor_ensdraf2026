@@ -199,13 +199,8 @@ class _UsageAgreementScreenState extends State<UsageAgreementScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const Text(
-            'أقرّ بأن هذا التطبيق مخصص للاستخدام المصرح به فقط، وأتعهد بعدم نسخه أو نشره أو مشاركته أو نقله أو تداوله مع أي مدرسة أو جهة أخرى دون إذن مسبق من المصمم.',
-            style: TextStyle(height: 1.9),
-          ),
-          const SizedBox(height: 13),
-          const Text(
-            'كما ألتزم بالمحافظة على سرية البيانات وعدم استخدامها أو محاولة العبث بالتطبيق أو استخدامه بطريقة غير نظامية.',
-            style: TextStyle(height: 1.9),
+            'أتعهد باستخدام هذا التطبيق للأغراض النظامية والمصرح بها فقط، وعدم إساءة استخدامه أو استخدامه بما يخالف الأنظمة والتعليمات. كما أتعهد بعدم نشر التطبيق أو نسخه أو مشاركته أو توزيعه أو إتاحته للغير إلا بإذن صريح من صاحب التطبيق.',
+            style: TextStyle(fontWeight: FontWeight.w800, height: 1.9),
           ),
           const SizedBox(height: 13),
           Container(
@@ -215,12 +210,12 @@ class _UsageAgreementScreenState extends State<UsageAgreementScreen> {
               borderRadius: BorderRadius.circular(14),
             ),
             child: const Text(
-              'جميع الحقوق الفكرية والتصميمية والبرمجية محفوظة للمصمم.',
-              textAlign: TextAlign.center,
+              'جميع الحقوق الفكرية والبرمجية والتصميمية للتطبيق محفوظة لصاحب التطبيق، ولا يجوز نسخ التطبيق أو تعديل بنيته أو إعادة استخدام أجزائه أو محاولة تجاوز وسائل الحماية أو نسب العمل للغير دون إذن.',
+              textAlign: TextAlign.start,
               style: TextStyle(
                 color: Color(0xFF6E5220),
-                fontWeight: FontWeight.w900,
-                height: 1.6,
+                fontWeight: FontWeight.w800,
+                height: 1.9,
               ),
             ),
           ),

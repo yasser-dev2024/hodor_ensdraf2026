@@ -14,6 +14,12 @@ import '../models/period_report.dart';
 import '../models/student.dart';
 
 class ReportService {
+  static List<AttendanceRecord> absentOnly(
+    Iterable<AttendanceRecord> records,
+  ) => records
+      .where((record) => record.status == AttendanceStatus.absent)
+      .toList(growable: false);
+
   Future<pw.Font> _arabicFont() async {
     final data = await rootBundle.load('assets/fonts/NotoSansArabic.ttf');
     return pw.Font.ttf(data);
@@ -550,6 +556,183 @@ class ReportService {
     final bytes = excel.save();
     if (bytes == null) throw StateError('تعذر إنشاء ملف Excel.');
     return _saveTemp('attendance_$date.xlsx', bytes);
+  }
+
+  Future<File> generateDailyAbsencePdf({
+    required String date,
+    required List<AttendanceRecord> records,
+    required String schoolName,
+    required String scopeLabel,
+    String fileNameSuffix = 'all',
+  }) async {
+    final absentees = absentOnly(records);
+    final font = await _arabicFont();
+    final reportDate = SchoolDayFormatter.parseKey(date);
+    final document = pw.Document(
+      title: 'التقرير النهائي للطلاب الغائبين $date',
+      author: schoolName,
+    );
+    document.addPage(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        textDirection: pw.TextDirection.rtl,
+        theme: pw.ThemeData.withFont(base: font, bold: font),
+        margin: const pw.EdgeInsets.all(28),
+        header: (context) => pw.Container(
+          padding: const pw.EdgeInsets.only(bottom: 10),
+          decoration: const pw.BoxDecoration(
+            border: pw.Border(
+              bottom: pw.BorderSide(color: PdfColor.fromInt(0xFFD54848)),
+            ),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Text(schoolName, style: const pw.TextStyle(fontSize: 12)),
+              pw.Text(
+                'التقرير النهائي للطلاب الغائبين',
+                style: pw.TextStyle(
+                  fontSize: 18,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+        ),
+        build: (context) => [
+          pw.SizedBox(height: 16),
+          pw.Text(
+            'اليوم والتاريخ الميلادي: ${SchoolDayFormatter.gregorianLong(reportDate)}',
+            style: const pw.TextStyle(fontSize: 13),
+          ),
+          pw.Text(
+            'التاريخ الهجري: ${SchoolDayFormatter.hijriLong(reportDate)}',
+            style: const pw.TextStyle(fontSize: 13),
+          ),
+          pw.Text(
+            'النطاق: $scopeLabel',
+            style: const pw.TextStyle(fontSize: 13),
+          ),
+          pw.SizedBox(height: 16),
+          pw.Container(
+            width: double.infinity,
+            padding: const pw.EdgeInsets.all(12),
+            decoration: pw.BoxDecoration(
+              color: const PdfColor.fromInt(0xFFFFEEEE),
+              borderRadius: pw.BorderRadius.circular(8),
+            ),
+            child: pw.Text(
+              'عدد الطلاب الغائبين: ${absentees.length}',
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(
+                fontSize: 15,
+                fontWeight: pw.FontWeight.bold,
+                color: const PdfColor.fromInt(0xFFD54848),
+              ),
+            ),
+          ),
+          pw.SizedBox(height: 18),
+          if (absentees.isEmpty)
+            pw.Center(
+              child: pw.Text(
+                'لا يوجد طلاب غائبون في التاريخ والنطاق المحددين.',
+                style: pw.TextStyle(
+                  fontSize: 14,
+                  fontWeight: pw.FontWeight.bold,
+                ),
+              ),
+            )
+          else
+            pw.TableHelper.fromTextArray(
+              headers: const ['م', 'اسم الطالب', 'الصف / الفصل'],
+              data: [
+                for (var index = 0; index < absentees.length; index++)
+                  [
+                    '${index + 1}',
+                    absentees[index].studentName,
+                    absentees[index].classLabel,
+                  ],
+              ],
+              headerStyle: pw.TextStyle(
+                fontWeight: pw.FontWeight.bold,
+                color: PdfColors.white,
+              ),
+              headerDecoration: const pw.BoxDecoration(
+                color: PdfColor.fromInt(0xFFD54848),
+              ),
+              cellAlignment: pw.Alignment.centerRight,
+              cellStyle: const pw.TextStyle(fontSize: 11),
+              oddRowDecoration: const pw.BoxDecoration(
+                color: PdfColor.fromInt(0xFFFFF5F5),
+              ),
+            ),
+        ],
+        footer: (context) => pw.Align(
+          alignment: pw.Alignment.center,
+          child: pw.Text(
+            'صفحة ${context.pageNumber} من ${context.pagesCount}',
+            style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700),
+          ),
+        ),
+      ),
+    );
+    return _saveTemp(
+      'absence_${_safeFilePart(fileNameSuffix)}_$date.pdf',
+      await document.save(),
+    );
+  }
+
+  Future<File> exportDailyAbsenceExcel({
+    required String date,
+    required List<AttendanceRecord> records,
+    required String scopeLabel,
+    String fileNameSuffix = 'all',
+  }) async {
+    final absentees = absentOnly(records);
+    final reportDate = SchoolDayFormatter.parseKey(date);
+    final excel = Excel.createExcel();
+    final sheet = excel['الطلاب الغائبون'];
+    sheet.isRTL = true;
+    sheet.appendRow(
+      ['التقرير النهائي للطلاب الغائبين'].map(TextCellValue.new).toList(),
+    );
+    sheet.appendRow(
+      [
+        'التاريخ',
+        SchoolDayFormatter.dualInline(reportDate),
+      ].map(TextCellValue.new).toList(),
+    );
+    sheet.appendRow(['النطاق', scopeLabel].map(TextCellValue.new).toList());
+    sheet.appendRow(
+      [
+        'عدد الطلاب الغائبين',
+        '${absentees.length}',
+      ].map(TextCellValue.new).toList(),
+    );
+    sheet.appendRow(const []);
+    sheet.appendRow(
+      ['م', 'اسم الطالب', 'الصف / الفصل'].map(TextCellValue.new).toList(),
+    );
+    for (var index = 0; index < absentees.length; index++) {
+      final record = absentees[index];
+      sheet.appendRow([
+        IntCellValue(index + 1),
+        TextCellValue(record.studentName),
+        TextCellValue(record.classLabel),
+      ]);
+    }
+    if (excel.tables.containsKey('Sheet1')) excel.delete('Sheet1');
+    final bytes = excel.save();
+    if (bytes == null) throw StateError('تعذر إنشاء ملف Excel.');
+    return _saveTemp(
+      'absence_${_safeFilePart(fileNameSuffix)}_$date.xlsx',
+      bytes,
+    );
+  }
+
+  static String _safeFilePart(String value) {
+    final safe = value.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+    return safe.isEmpty ? 'all' : safe;
   }
 
   pw.Widget _statBox(String label, int value, PdfColor color) => pw.Expanded(

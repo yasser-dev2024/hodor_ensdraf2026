@@ -15,6 +15,18 @@ void main() {
     expect(find.text('مفتاح التفعيل'), findsNothing);
     expect(find.byType(TextField), findsNothing);
     expect(find.byType(SelectableText), findsNothing);
+    expect(
+      find.text(
+        'أتعهد باستخدام هذا التطبيق للأغراض النظامية والمصرح بها فقط، وعدم إساءة استخدامه أو استخدامه بما يخالف الأنظمة والتعليمات. كما أتعهد بعدم نشر التطبيق أو نسخه أو مشاركته أو توزيعه أو إتاحته للغير إلا بإذن صريح من صاحب التطبيق.',
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.text(
+        'جميع الحقوق الفكرية والبرمجية والتصميمية للتطبيق محفوظة لصاحب التطبيق، ولا يجوز نسخ التطبيق أو تعديل بنيته أو إعادة استخدام أجزائه أو محاولة تجاوز وسائل الحماية أو نسب العمل للغير دون إذن.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('أوافق وأتابع'), findsOneWidget);
   });
 }

@@ -6,6 +6,7 @@ import '../../core/providers.dart';
 import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/attendance_record.dart';
+import 'absence_report_screen.dart';
 import 'advanced_reports_screen.dart';
 import 'daily_report_screen.dart';
 import 'report_archive_screen.dart';
@@ -35,9 +36,22 @@ class ReportsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 20),
           _ReportNavigationCard(
+            color: AppColors.absent,
+            icon: Icons.person_off_rounded,
+            title: 'التقرير النهائي للطلاب الغائبين',
+            subtitle: 'غياب فقط — لجميع الفصول أو فصل محدد — PDF وExcel',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) =>
+                    AbsenceReportScreen(initialDate: DateTime.now()),
+              ),
+            ),
+          ),
+          const SizedBox(height: 9),
+          _ReportNavigationCard(
             color: AppColors.blue,
             icon: Icons.today_rounded,
-            title: 'تقرير اليوم الحالي',
+            title: 'التقرير العام للحضور',
             subtitle: 'الحضور والغياب والاستئذان والتفاصيل والتصدير',
             onPressed: () => Navigator.of(context).push(
               MaterialPageRoute(
@@ -154,7 +168,7 @@ class ReportsScreen extends ConsumerWidget {
                           ),
                         ),
                         icon: const Icon(Icons.description_rounded),
-                        label: const Text('فتح تقرير اليوم'),
+                        label: const Text('فتح التقرير العام'),
                       ),
                     ],
                   ),
