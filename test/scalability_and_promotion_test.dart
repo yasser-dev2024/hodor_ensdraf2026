@@ -223,6 +223,16 @@ void main() {
         ),
         1,
       );
+      final restoreTimer = Stopwatch()..start();
+      final disabledBatches = await students.disabledBatchCounts();
+      expect(disabledBatches.byGrade[fifthId], 5000);
+      expect(
+        await students.reactivateBatch(gradeId: fifthId, userId: managerId),
+        5000,
+      );
+      restoreTimer.stop();
+      expect(restoreTimer.elapsed, lessThan(const Duration(seconds: 90)));
+      expect(await students.activeCount(gradeId: fifthId), 5000);
       final integrity = await database.db.rawQuery('PRAGMA integrity_check');
       expect(integrity.single.values.single, 'ok');
       await database.close();

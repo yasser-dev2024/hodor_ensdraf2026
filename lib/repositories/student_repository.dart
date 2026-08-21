@@ -51,6 +51,13 @@ class BulkStudentCreateResult {
   final int duplicates;
 }
 
+class DisabledBatchCounts {
+  const DisabledBatchCounts({required this.byGrade, required this.byStage});
+
+  final Map<String, int> byGrade;
+  final Map<String, int> byStage;
+}
+
 class StudentRepository {
   StudentRepository(this._database, this._protection);
 
@@ -634,6 +641,119 @@ class StudentRepository {
         },
       );
       return rows.length;
+    });
+  }
+
+  Future<DisabledBatchCounts> disabledBatchCounts() async {
+    final rows = await _database.db.rawQuery('''
+      SELECT s.grade_id, TRIM(s.stage) AS stage, COUNT(*) AS count
+      FROM students s
+      JOIN (
+        SELECT entity_id, MAX(id) AS latest_id
+        FROM audit_logs
+        WHERE entity_type = 'student'
+          AND action IN (
+            'student_deactivate', 'student_reactivate', 'student_graduate'
+          )
+        GROUP BY entity_id
+      ) lifecycle ON lifecycle.entity_id = s.id
+      JOIN audit_logs latest ON latest.id = lifecycle.latest_id
+      WHERE s.status = 'inactive'
+        AND latest.action = 'student_deactivate'
+        AND COALESCE(latest.new_value, '') LIKE '%"batch":true%'
+      GROUP BY s.grade_id, TRIM(s.stage)
+    ''');
+    final byGrade = <String, int>{};
+    final byStage = <String, int>{};
+    for (final row in rows) {
+      final count = row['count'] as int;
+      final gradeId = row['grade_id'] as String?;
+      final stage = row['stage'] as String?;
+      if (gradeId != null && gradeId.isNotEmpty) {
+        byGrade.update(
+          gradeId,
+          (value) => value + count,
+          ifAbsent: () => count,
+        );
+      }
+      if (stage != null && stage.isNotEmpty) {
+        byStage.update(stage, (value) => value + count, ifAbsent: () => count);
+      }
+    }
+    return DisabledBatchCounts(byGrade: byGrade, byStage: byStage);
+  }
+
+  Future<int> reactivateBatch({
+    String? gradeId,
+    String? stage,
+    required String userId,
+  }) async {
+    await _requireManager(userId);
+    if ((gradeId == null) == (stage == null)) {
+      throw ArgumentError('حدد صفًا أو مرحلة واحدة فقط.');
+    }
+    final condition = gradeId != null ? 's.grade_id = ?' : 'TRIM(s.stage) = ?';
+    final value = gradeId ?? stage!.trim();
+    final now = DateTime.now().toUtc().toIso8601String();
+    return _database.db.transaction((txn) async {
+      final rows = await txn.rawQuery(
+        '''
+        SELECT s.id
+        FROM students s
+        JOIN (
+          SELECT entity_id, MAX(id) AS latest_id
+          FROM audit_logs
+          WHERE entity_type = 'student'
+            AND action IN (
+              'student_deactivate', 'student_reactivate', 'student_graduate'
+            )
+          GROUP BY entity_id
+        ) lifecycle ON lifecycle.entity_id = s.id
+        JOIN audit_logs latest ON latest.id = lifecycle.latest_id
+        WHERE s.status = 'inactive'
+          AND $condition
+          AND latest.action = 'student_deactivate'
+          AND COALESCE(latest.new_value, '') LIKE '%"batch":true%'
+        ''',
+        [value],
+      );
+      if (rows.isEmpty) return 0;
+      final ids = rows.map((row) => row['id'] as String).toList();
+      for (var start = 0; start < ids.length; start += 400) {
+        final end = (start + 400 < ids.length) ? start + 400 : ids.length;
+        final chunk = ids.sublist(start, end);
+        await txn.update(
+          'students',
+          {'status': 'active', 'deleted_at': null, 'updated_at': now},
+          where: 'id IN (${List.filled(chunk.length, '?').join(',')})',
+          whereArgs: chunk,
+        );
+      }
+      for (final id in ids) {
+        await _audit(
+          txn,
+          'student_reactivate',
+          'student',
+          id,
+          userId,
+          {'status': 'inactive', 'batch': true},
+          {'status': 'active', 'batch_restore': true},
+        );
+      }
+      await _audit(
+        txn,
+        'student_batch_reactivate',
+        'student_batch',
+        value,
+        userId,
+        null,
+        {
+          'scope': gradeId != null ? 'grade' : 'stage',
+          'scope_id': value,
+          'count': ids.length,
+        },
+      );
+      return ids.length;
     });
   }
 

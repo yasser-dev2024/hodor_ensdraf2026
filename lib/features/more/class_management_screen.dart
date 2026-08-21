@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/school_class.dart';
+import '../../repositories/class_repository.dart';
 
 class ClassManagementScreen extends ConsumerStatefulWidget {
   const ClassManagementScreen({super.key});
@@ -315,71 +316,172 @@ class _ClassManagementScreenState extends ConsumerState<ClassManagementScreen> {
   }
 
   Future<void> _deleteGrade(SchoolGrade grade) async {
-    final confirm = await _confirm(
-      'حذف ${grade.name}',
-      'لا يمكن حذف الصف إذا كان يحتوي على فصول أو طلاب مرتبطين.',
-    );
-    if (confirm) {
-      await _run(
-        () => ref
-            .read(classRepositoryProvider)
-            .deleteGrade(grade.id, userId: ref.read(currentUserProvider)!.id),
+    try {
+      final repository = ref.read(classRepositoryProvider);
+      final impact = await repository.gradeDeletionImpact(grade.id);
+      if (!mounted) return;
+      final confirm = await _confirmPermanentDeletion(
+        title: 'حذف صف ${grade.name} نهائيًا',
+        body:
+            'سيُحذف الصف وجميع فصوله وطلابه وسجلاتهم التابعة من التطبيق. لا يمكن التراجع عن هذه العملية، ويمكن إنشاء الصف واستيراد طلابه لاحقًا كبيانات جديدة.',
+        impact: impact,
       );
+      if (confirm) {
+        await _run(
+          () => repository.deleteGrade(
+            grade.id,
+            userId: ref.read(currentUserProvider)!.id,
+          ),
+          successMessage: 'تم حذف صف ${grade.name} وجميع بياناته التابعة.',
+        );
+      }
+    } catch (_) {
+      _showSafeError();
     }
   }
 
   Future<void> _deleteClass(SchoolClass schoolClass) async {
-    final confirm = await _confirm(
-      'حذف ${schoolClass.label}',
-      'لا يمكن حذف الفصل إذا كان مرتبطًا بطلاب أو سجلات.',
-    );
-    if (confirm) {
-      await _run(
-        () => ref
-            .read(classRepositoryProvider)
-            .deleteClass(
-              schoolClass.id,
-              userId: ref.read(currentUserProvider)!.id,
-            ),
+    try {
+      final repository = ref.read(classRepositoryProvider);
+      final impact = await repository.classDeletionImpact(schoolClass.id);
+      if (!mounted) return;
+      final confirm = await _confirmPermanentDeletion(
+        title: 'حذف ${schoolClass.label} نهائيًا',
+        body:
+            'سيُحذف الفصل وطلابه وسجلات الحضور والنقل والتخريج التابعة له. لا يمكن التراجع، ويمكن إعادة الفصل وطلابه لاحقًا عن طريق الإضافة أو الاستيراد.',
+        impact: impact,
       );
+      if (confirm) {
+        await _run(
+          () => repository.deleteClass(
+            schoolClass.id,
+            userId: ref.read(currentUserProvider)!.id,
+          ),
+          successMessage: 'تم حذف ${schoolClass.label} وجميع بياناته التابعة.',
+        );
+      }
+    } catch (_) {
+      _showSafeError();
     }
   }
 
-  Future<bool> _confirm(String title, String body) async =>
+  Future<bool> _confirmPermanentDeletion({
+    required String title,
+    required String body,
+    required DeletionImpact impact,
+  }) async =>
       await showDialog<bool>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: Text(title),
-          content: Text(body),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('إلغاء'),
+        barrierDismissible: false,
+        builder: (context) {
+          var acknowledged = false;
+          return StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              icon: const Icon(
+                Icons.warning_amber_rounded,
+                color: AppColors.absent,
+                size: 48,
+              ),
+              title: Text(title, textAlign: TextAlign.center),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(body, style: const TextStyle(height: 1.55)),
+                    const SizedBox(height: 14),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (impact.classes > 0)
+                          _impactChip('الفصول', impact.classes),
+                        _impactChip('الطلاب', impact.students),
+                        _impactChip('سجلات الحضور', impact.attendanceRecords),
+                        if (impact.transferRecords > 0)
+                          _impactChip('سجلات النقل', impact.transferRecords),
+                        if (impact.graduationRecords > 0)
+                          _impactChip(
+                            'سجلات التخريج',
+                            impact.graduationRecords,
+                          ),
+                        if (impact.reportArchives > 0)
+                          _impactChip(
+                            'ملفات التقارير الخاصة',
+                            impact.reportArchives,
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    CheckboxListTile(
+                      value: acknowledged,
+                      onChanged: (value) =>
+                          setDialogState(() => acknowledged = value ?? false),
+                      controlAffinity: ListTileControlAffinity.leading,
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text(
+                        'أفهم أن الحذف نهائي وسيزيل البيانات التابعة.',
+                        style: TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('إلغاء'),
+                ),
+                FilledButton.icon(
+                  onPressed: acknowledged
+                      ? () => Navigator.pop(context, true)
+                      : null,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AppColors.absent,
+                  ),
+                  icon: const Icon(Icons.delete_forever_rounded),
+                  label: const Text('حذف نهائي'),
+                ),
+              ],
             ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('حذف'),
-            ),
-          ],
-        ),
+          );
+        },
       ) ??
       false;
 
-  Future<void> _run(Future<Object?> Function() action) async {
+  Widget _impactChip(String label, int count) => Chip(
+    label: Text('$label: $count'),
+    side: BorderSide(color: AppColors.absent.withValues(alpha: .22)),
+  );
+
+  Future<void> _run(
+    Future<Object?> Function() action, {
+    String? successMessage,
+  }) async {
     try {
       await action();
       refreshData(ref);
-      if (mounted) setState(() => _revision++);
-    } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'تعذر تنفيذ العملية. قد تكون هناك بيانات مرتبطة.\n$error',
-            ),
-          ),
-        );
+        setState(() => _revision++);
+        if (successMessage != null) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(successMessage)));
+        }
       }
+    } catch (_) {
+      _showSafeError();
     }
+  }
+
+  void _showSafeError() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'تعذر تنفيذ العملية بأمان، ولم يُحذف أي جزء من البيانات.',
+        ),
+      ),
+    );
   }
 }

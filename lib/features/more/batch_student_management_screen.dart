@@ -21,6 +21,8 @@ class _BatchStudentManagementScreenState
   String? _targetGradeId;
   String? _deleteGradeId;
   String? _deleteStage;
+  String? _restoreGradeId;
+  String? _restoreStage;
   String? _graduationGradeId;
   Map<String, String> _classMapping = {};
   final _nextAcademicYear = TextEditingController();
@@ -32,12 +34,18 @@ class _BatchStudentManagementScreenState
     _data = _load();
   }
 
-  Future<_BatchData> _load() async => _BatchData(
-    grades: await ref.read(classRepositoryProvider).getGrades(),
-    classes: await ref.read(classRepositoryProvider).getClasses(),
-    stages: await ref.read(studentRepositoryProvider).getActiveStages(),
-    academicYears: await ref.read(studentRepositoryProvider).getAcademicYears(),
-  );
+  Future<_BatchData> _load() async {
+    final studentRepository = ref.read(studentRepositoryProvider);
+    final disabled = await studentRepository.disabledBatchCounts();
+    return _BatchData(
+      grades: await ref.read(classRepositoryProvider).getGrades(),
+      classes: await ref.read(classRepositoryProvider).getClasses(),
+      stages: await studentRepository.getActiveStages(),
+      academicYears: await studentRepository.getAcademicYears(),
+      disabledGradeCounts: disabled.byGrade,
+      disabledStageCounts: disabled.byStage,
+    );
+  }
 
   @override
   void dispose() {
@@ -411,6 +419,136 @@ class _BatchStudentManagementScreenState
                 ),
               ),
             ),
+            const SizedBox(height: 20),
+            _sectionTitle(
+              'إعادة تفعيل دفعة معطلة',
+              Icons.person_add_alt_1_rounded,
+            ),
+            const SizedBox(height: 8),
+            _InfoBanner(
+              icon: Icons.restore_rounded,
+              color: AppColors.present,
+              text:
+                  'يعيد التطبيق الطلاب الذين عُطّلوا ضمن دفعة فقط، ولا يعيد أي طالب عُطّل فرديًا أو تم تخريجه.',
+            ),
+            const SizedBox(height: 10),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child:
+                    data.disabledGradeCounts.isEmpty &&
+                        data.disabledStageCounts.isEmpty
+                    ? const Text(
+                        'لا توجد دفعات معطلة قابلة لإعادة التفعيل.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Colors.blueGrey,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      )
+                    : Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (data.disabledGradeCounts.isNotEmpty) ...[
+                            DropdownButtonFormField<String>(
+                              value: _restoreGradeId,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                labelText: 'الصف المعطل المراد إعادته',
+                                prefixIcon: Icon(Icons.restore_rounded),
+                              ),
+                              items: data.grades
+                                  .where(
+                                    (grade) => data.disabledGradeCounts
+                                        .containsKey(grade.id),
+                                  )
+                                  .map(
+                                    (grade) => DropdownMenuItem(
+                                      value: grade.id,
+                                      child: Text(
+                                        '${grade.name} — ${data.disabledGradeCounts[grade.id]} طالب',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: _busy
+                                  ? null
+                                  : (value) =>
+                                        setState(() => _restoreGradeId = value),
+                            ),
+                            if (_restoreGradeId != null) ...[
+                              const SizedBox(height: 10),
+                              FilledButton.icon(
+                                onPressed: _busy
+                                    ? null
+                                    : () => _reactivateGrade(data),
+                                icon: const Icon(
+                                  Icons.person_add_alt_1_rounded,
+                                ),
+                                label: Text(
+                                  'إعادة تفعيل ${data.disabledGradeCounts[_restoreGradeId] ?? 0} طالبًا',
+                                ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: AppColors.present,
+                                  minimumSize: const Size.fromHeight(52),
+                                ),
+                              ),
+                            ],
+                          ],
+                          if (data.disabledGradeCounts.isNotEmpty &&
+                              data.disabledStageCounts.isNotEmpty)
+                            const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 16),
+                              child: Divider(),
+                            ),
+                          if (data.disabledStageCounts.isNotEmpty) ...[
+                            DropdownButtonFormField<String>(
+                              value: _restoreStage,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                labelText: 'المرحلة المعطلة المراد إعادتها',
+                                prefixIcon: Icon(
+                                  Icons.account_balance_outlined,
+                                ),
+                              ),
+                              items: data.disabledStageCounts.entries
+                                  .map(
+                                    (entry) => DropdownMenuItem(
+                                      value: entry.key,
+                                      child: Text(
+                                        '${entry.key} — ${entry.value} طالب',
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  )
+                                  .toList(),
+                              onChanged: _busy
+                                  ? null
+                                  : (value) =>
+                                        setState(() => _restoreStage = value),
+                            ),
+                            if (_restoreStage != null) ...[
+                              const SizedBox(height: 10),
+                              FilledButton.icon(
+                                onPressed: _busy ? null : _reactivateStage,
+                                icon: const Icon(
+                                  Icons.person_add_alt_1_rounded,
+                                ),
+                                label: Text(
+                                  'إعادة تفعيل ${data.disabledStageCounts[_restoreStage] ?? 0} طالبًا',
+                                ),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: AppColors.present,
+                                  minimumSize: const Size.fromHeight(52),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ],
+                      ),
+              ),
+            ),
           ],
         );
       },
@@ -636,6 +774,59 @@ class _BatchStudentManagementScreenState
     }
   });
 
+  Future<void> _reactivateGrade(_BatchData data) async {
+    final gradeId = _restoreGradeId;
+    if (gradeId == null) return;
+    final grade = data.grades.where((item) => item.id == gradeId).firstOrNull;
+    if (grade == null) {
+      _showError('الصف المحدد لم يعد موجودًا.');
+      return;
+    }
+    final count = data.disabledGradeCounts[gradeId] ?? 0;
+    final confirmed = await _confirm(
+      title: 'إعادة تفعيل طلاب ${grade.name}',
+      body:
+          'سيعود $count طالبًا عُطّلوا ضمن الدفعة إلى قوائم الطلاب النشطة والمسح. لن يتغير أي سجل حضور سابق.',
+      confirmLabel: 'إعادة التفعيل',
+    );
+    if (!confirmed) return;
+    await _reactivate(gradeId: gradeId);
+  }
+
+  Future<void> _reactivateStage() async {
+    final stage = _restoreStage;
+    if (stage == null) return;
+    final confirmed = await _confirm(
+      title: 'إعادة تفعيل مرحلة $stage',
+      body:
+          'سيعود الطلاب الذين عُطّلوا ضمن هذه الدفعة إلى قوائم الطلاب النشطة والمسح، دون تغيير سجلاتهم السابقة.',
+      confirmLabel: 'إعادة التفعيل',
+    );
+    if (!confirmed) return;
+    await _reactivate(stage: stage);
+  }
+
+  Future<void> _reactivate({String? gradeId, String? stage}) => _run(() async {
+    final count = await ref
+        .read(studentRepositoryProvider)
+        .reactivateBatch(
+          gradeId: gradeId,
+          stage: stage,
+          userId: ref.read(currentUserProvider)!.id,
+        );
+    refreshData(ref);
+    if (mounted) {
+      await _showSuccess(
+        'تمت إعادة تفعيل $count طالبًا مع بقاء جميع سجلاتهم السابقة.',
+      );
+      setState(() {
+        _restoreGradeId = null;
+        _restoreStage = null;
+        _data = _load();
+      });
+    }
+  });
+
   Future<void> _run(Future<void> Function() action) async {
     setState(() => _busy = true);
     try {
@@ -703,12 +894,16 @@ class _BatchData {
     required this.classes,
     required this.stages,
     required this.academicYears,
+    required this.disabledGradeCounts,
+    required this.disabledStageCounts,
   });
 
   final List<SchoolGrade> grades;
   final List<SchoolClass> classes;
   final List<String> stages;
   final List<AcademicYearRecord> academicYears;
+  final Map<String, int> disabledGradeCounts;
+  final Map<String, int> disabledStageCounts;
 }
 
 class _BatchCount extends ConsumerWidget {
@@ -785,4 +980,8 @@ class _ErrorState extends StatelessWidget {
       ),
     ),
   );
+}
+
+extension _FirstOrNull<T> on Iterable<T> {
+  T? get firstOrNull => isEmpty ? null : first;
 }
