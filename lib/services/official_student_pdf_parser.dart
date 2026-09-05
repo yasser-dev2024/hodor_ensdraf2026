@@ -30,6 +30,11 @@ class OfficialStudentPdfParser {
         .toList();
     if (pages.isEmpty) return null;
 
+    final rosterRows = _parseOfficialRosterPages(pages);
+    if (rosterRows.isNotEmpty) {
+      return <List<String>>[headers, ...rosterRows];
+    }
+
     final studentDataRows = _parseStudentDataListPages(pages);
     if (studentDataRows.isNotEmpty) {
       return <List<String>>[headers, ...studentDataRows];
@@ -40,6 +45,66 @@ class OfficialStudentPdfParser {
       return <List<String>>[headers, ...registryRows];
     }
     return null;
+  }
+
+  /// Converts the multi-sheet "كشف الطلاب" Excel export into the same
+  /// four-column table used by the regular importer. Ministry exports split a
+  /// class over several sheets, so parsing a single selected sheet silently
+  /// omits most of the students.
+  static List<List<String>>? parseWorkbookSheets(
+    Iterable<List<List<String>>> rawSheets,
+  ) {
+    final parsed = <List<String>>[];
+    var recognizedSheets = 0;
+    for (final rows in rawSheets) {
+      if (rows.isEmpty) continue;
+      final headerIndex = rows.indexWhere(_looksLikeRosterHeader);
+      if (headerIndex < 0) continue;
+
+      final header = rows[headerIndex];
+      final nameColumn = _findColumn(header, const {'اسمالطالب'});
+      final nationalIdColumn = _findColumn(header, const {
+        'رقمرخصةالاقامة',
+        'رقمرخصةالإقامة',
+        'السجلالمدني',
+        'رقمالهوية',
+      });
+      final classColumn = _findColumn(header, const {'الفصل'});
+      if (nameColumn == null || nationalIdColumn == null) continue;
+
+      final grade = _gradeFromWorkbookRows(rows.take(headerIndex));
+      final stage = _stageFromWorkbookRows(rows.take(headerIndex));
+      final fallbackClass = _classFromWorkbookRows(rows.take(headerIndex));
+      final sheetRows = <List<String>>[];
+      for (var index = headerIndex + 1; index < rows.length; index++) {
+        final row = rows[index];
+        final name = _cell(row, nameColumn).replaceAll(RegExp(r'\s+'), ' ');
+        final nationalId = _normalizeDigits(
+          _cell(row, nationalIdColumn),
+        ).replaceAll(RegExp(r'\D'), '');
+        if (name.length < 2 || nationalId.length != 10) continue;
+        final schoolClass = classColumn == null
+            ? fallbackClass
+            : _cell(row, classColumn).trim();
+        sheetRows.add(<String>[
+          name.trim(),
+          nationalId,
+          grade,
+          schoolClass.isEmpty ? fallbackClass : schoolClass,
+          stage,
+        ]);
+      }
+      if (sheetRows.isNotEmpty) {
+        recognizedSheets++;
+        parsed.addAll(sheetRows);
+      }
+    }
+    if (recognizedSheets == 0 || parsed.isEmpty) return null;
+
+    return <List<String>>[
+      const <String>['اسم الطالب', 'السجل المدني', 'الصف', 'الفصل', 'المرحلة'],
+      ...parsed,
+    ];
   }
 
   /// Normalizes the two Arabic encodings encountered in official Ministry
@@ -69,6 +134,128 @@ class OfficialStudentPdfParser {
       normalizedLines.add(normalized);
     }
     return normalizedLines.join('\n').trim();
+  }
+
+  static List<List<String>> _parseOfficialRosterPages(List<String> pages) {
+    final rows = <List<String>>[];
+    final seenNationalIds = <String>{};
+    String? currentGrade;
+    String? currentClass;
+
+    for (final page in pages) {
+      final lines = page
+          .split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      if (lines.isEmpty) continue;
+
+      final pageGrade = _valueFollowingLabel(
+        lines,
+        'الصف',
+        RegExp('^$_gradePattern(?:\\s+الابتدائي)?\$'),
+      );
+      final pageClass = _valueFollowingLabel(
+        lines,
+        'الفصل',
+        RegExp(r'^[0-9]{1,2}$'),
+      );
+      if (pageGrade != null) currentGrade = _normalizeGrade(pageGrade);
+      if (pageClass != null) currentClass = pageClass;
+      if (currentGrade == null || currentClass == null) continue;
+
+      var recordStart = 0;
+      for (var index = 0; index < lines.length; index++) {
+        final statusEnd = _rosterStatusEnd(lines, index);
+        if (statusEnd == null) continue;
+
+        var serialIndex = statusEnd;
+        final nameLines = <String>[];
+        while (serialIndex < lines.length &&
+            !RegExp(r'^[0-9]{1,3}$').hasMatch(lines[serialIndex])) {
+          if (RegExp(r'[ء-ي]').hasMatch(lines[serialIndex])) {
+            nameLines.add(lines[serialIndex]);
+          }
+          serialIndex++;
+        }
+        if (serialIndex >= lines.length) break;
+
+        final dateIndex = _lastIndexWhere(
+          lines,
+          recordStart,
+          index,
+          (line) => RegExp(r'^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$').hasMatch(line),
+        );
+        final nationalId = dateIndex == null
+            ? null
+            : _nationalIdBeforeDate(lines, dateIndex, recordStart);
+        final name = nameLines.join(' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+        if (nationalId != null &&
+            name.length >= 2 &&
+            seenNationalIds.add(nationalId)) {
+          rows.add(<String>[name, nationalId, currentGrade, currentClass]);
+        }
+        recordStart = serialIndex + 1;
+        index = serialIndex;
+      }
+    }
+    return rows;
+  }
+
+  static int? _rosterStatusEnd(List<String> lines, int index) {
+    if (lines[index] == 'مستمر في الدراسة') return index + 1;
+    if (lines[index] == 'مستمر في' &&
+        index + 1 < lines.length &&
+        lines[index + 1] == 'الدراسة') {
+      return index + 2;
+    }
+    return null;
+  }
+
+  static String? _nationalIdBeforeDate(
+    List<String> lines,
+    int dateIndex,
+    int recordStart,
+  ) {
+    // The line immediately before the birth date is the nationality. The
+    // identity value before it is commonly wrapped as 9+1 or 7+3 digits.
+    var index = dateIndex - 2;
+    var digitCount = 0;
+    final reversedParts = <String>[];
+    while (index >= recordStart && digitCount < 10) {
+      final part = lines[index];
+      if (!RegExp(r'^[0-9]+$').hasMatch(part)) break;
+      reversedParts.add(part);
+      digitCount += part.length;
+      index--;
+    }
+    if (digitCount != 10) return null;
+    return reversedParts.reversed.join();
+  }
+
+  static int? _lastIndexWhere(
+    List<String> values,
+    int start,
+    int end,
+    bool Function(String value) predicate,
+  ) {
+    for (var index = end - 1; index >= start; index--) {
+      if (predicate(values[index])) return index;
+    }
+    return null;
+  }
+
+  static String? _valueFollowingLabel(
+    List<String> lines,
+    String label,
+    RegExp valuePattern,
+  ) {
+    for (var index = lines.length - 2; index >= 0; index--) {
+      if (lines[index] == label && valuePattern.hasMatch(lines[index + 1])) {
+        return lines[index + 1];
+      }
+    }
+    return null;
   }
 
   static List<List<String>> _parseStudentDataListPages(List<String> pages) {
@@ -185,18 +372,88 @@ class OfficialStudentPdfParser {
       .trim();
 
   static bool _looksLikeMalformedArialCidText(String value) {
-    if (!value.contains("Student's Name") &&
-        !value.contains('Nationality') &&
-        !value.contains('Date of birth')) {
-      return false;
-    }
     var glyphs = 0;
     for (final rune in value.runes) {
       if ((rune >= 897 && rune <= 1020) || rune == 3020) glyphs++;
-      if (glyphs >= 12) return true;
+      if (glyphs >= 24) break;
     }
-    return false;
+    if (glyphs < 12) return false;
+    if (value.contains("Student's Name") ||
+        value.contains('Nationality') ||
+        value.contains('Date of birth')) {
+      return true;
+    }
+    return glyphs >= 24 &&
+        (value.contains('ReportID:') ||
+            RegExp(r'[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}').hasMatch(value));
   }
+
+  static bool _looksLikeRosterHeader(List<String> row) {
+    final headers = row.map(_normalizeWorkbookHeader).toSet();
+    final hasNationalId =
+        headers.contains('رقمرخصةالاقامة') ||
+        headers.contains('رقمرخصةالإقامة') ||
+        headers.contains('السجلالمدني') ||
+        headers.contains('رقمالهوية');
+    return headers.contains('اسمالطالب') &&
+        headers.contains('حالةالقيد') &&
+        hasNationalId;
+  }
+
+  static int? _findColumn(List<String> row, Set<String> aliases) {
+    for (var index = 0; index < row.length; index++) {
+      if (aliases.contains(_normalizeWorkbookHeader(row[index]))) return index;
+    }
+    return null;
+  }
+
+  static String _normalizeWorkbookHeader(String value) => value
+      .trim()
+      .replaceAll(RegExp(r'[ًٌٍَُِّْـ]'), '')
+      .replaceAll('أ', 'ا')
+      .replaceAll('إ', 'ا')
+      .replaceAll(RegExp(r'[^0-9ء-ي]'), '');
+
+  static String _gradeFromWorkbookRows(Iterable<List<String>> rows) {
+    for (final row in rows) {
+      for (final cell in row) {
+        final match = RegExp(
+          '^($_gradePattern)(?:\\s+(?:الابتدائي|الإبتدائي|الابتدائية|الإبتدائية))?\$',
+        ).firstMatch(cell.trim());
+        if (match != null) return match.group(1)!;
+      }
+    }
+    return '';
+  }
+
+  static String _stageFromWorkbookRows(Iterable<List<String>> rows) {
+    for (final row in rows) {
+      for (final cell in row) {
+        if (RegExp(
+          r'(?:الابتدائي|الإبتدائي|الابتدائية|الإبتدائية)',
+        ).hasMatch(cell)) {
+          return 'المرحلة الابتدائية';
+        }
+      }
+    }
+    return '';
+  }
+
+  static String _classFromWorkbookRows(Iterable<List<String>> rows) {
+    for (final row in rows) {
+      for (var index = 0; index < row.length; index++) {
+        if (_normalizeWorkbookHeader(row[index]) != 'الفصل') continue;
+        for (var valueIndex = index - 1; valueIndex >= 0; valueIndex--) {
+          final value = row[valueIndex].trim();
+          if (RegExp(r'^[0-9]{1,2}$').hasMatch(value)) return value;
+        }
+      }
+    }
+    return '';
+  }
+
+  static String _cell(List<String> row, int column) =>
+      column < row.length ? row[column].trim() : '';
 
   static bool _containsArabicCidGlyph(String value) => value.runes.any(
     (rune) =>

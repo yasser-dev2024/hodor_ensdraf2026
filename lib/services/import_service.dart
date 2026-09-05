@@ -15,6 +15,7 @@ import '../repositories/class_repository.dart';
 import '../repositories/student_repository.dart';
 import 'data_protection_service.dart';
 import 'official_student_pdf_parser.dart';
+import 'open_xml_workbook_reader.dart';
 
 class StudentImportService {
   StudentImportService({
@@ -45,6 +46,8 @@ class StudentImportService {
       'رقم الهوية',
       'الهوية',
       'رقم هوية',
+      'رقم رخصة الاقامة',
+      'رقم رخصة الإقامة',
       'national id',
       'id number',
     ],
@@ -169,24 +172,34 @@ class StudentImportService {
   }
 
   ImportWorkbook _readXlsx(String fileName, Uint8List bytes) {
-    final book = Excel.decodeBytes(bytes);
-    final sheets = <ImportSheetData>[];
-    for (final entry in book.tables.entries) {
-      final table = entry.value;
-      final rows = table.rows
-          .map((row) => row.map((cell) => _cleanCell(cell?.value)).toList())
-          .toList();
-      sheets.add(ImportSheetData(name: entry.key, rows: rows));
+    List<ImportSheetData> sheets;
+    try {
+      final book = Excel.decodeBytes(bytes);
+      sheets = <ImportSheetData>[];
+      for (final entry in book.tables.entries) {
+        final table = entry.value;
+        final rows = table.rows
+            .map((row) => row.map((cell) => _cleanCell(cell?.value)).toList())
+            .toList();
+        sheets.add(ImportSheetData(name: entry.key, rows: rows));
+      }
+    } catch (_) {
+      sheets = OpenXmlWorkbookReader.read(bytes);
     }
     if (sheets.isEmpty) {
       throw const FormatException(
         'ملف Excel لا يحتوي على أوراق قابلة للقراءة.',
       );
     }
+    final officialRows = OfficialStudentPdfParser.parseWorkbookSheets(
+      sheets.map((sheet) => sheet.rows),
+    );
     return ImportWorkbook(
       fileName: fileName,
       sourceType: 'xlsx',
-      sheets: sheets,
+      sheets: officialRows == null
+          ? sheets
+          : [ImportSheetData(name: 'جميع الطلاب', rows: officialRows)],
     );
   }
 
@@ -208,10 +221,15 @@ class StudentImportService {
     if (sheets.isEmpty) {
       throw const FormatException('ملف XLS لا يحتوي على أوراق قابلة للقراءة.');
     }
+    final officialRows = OfficialStudentPdfParser.parseWorkbookSheets(
+      sheets.map((sheet) => sheet.rows),
+    );
     return ImportWorkbook(
       fileName: fileName,
       sourceType: 'xls',
-      sheets: sheets,
+      sheets: officialRows == null
+          ? sheets
+          : [ImportSheetData(name: 'جميع الطلاب', rows: officialRows)],
     );
   }
 
