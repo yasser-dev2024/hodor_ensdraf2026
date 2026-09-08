@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/guardian_absence_message.dart';
 import '../../core/providers.dart';
 import '../../core/school_day_formatter.dart';
 import '../../core/theme/app_theme.dart';
@@ -48,9 +49,11 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
         .guardianPhonesForStudentIds(
           absentees.map((record) => record.studentId),
         );
-    final schoolName =
-        await ref.read(settingsRepositoryProvider).get('school_name') ??
-        'المدرسة';
+    final settings = await ref.read(settingsRepositoryProvider).getAll();
+    final schoolName = settings['school_name'] ?? 'المدرسة';
+    final guardianMessageTemplate =
+        settings[GuardianAbsenceMessage.settingKey] ??
+        GuardianAbsenceMessage.defaultTemplate;
     var scopeLabel = 'جميع الفصول';
     for (final schoolClass in classes) {
       if (schoolClass.id == _classId) {
@@ -65,6 +68,7 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
       scopeLabel: scopeLabel,
       guardianPhones: guardianPhones,
       schoolName: schoolName,
+      guardianMessageTemplate: guardianMessageTemplate,
     );
   }
 
@@ -321,9 +325,9 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
                         ),
                         isThreeLine:
                             data.guardianPhones[data
-                                    .absentees[index]
-                                    .studentId] ==
-                                null,
+                                .absentees[index]
+                                .studentId] ==
+                            null,
                         trailing: IconButton.filledTonal(
                           tooltip:
                               data.guardianPhones[data
@@ -344,6 +348,7 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
                                       .absentees[index]
                                       .studentId]!,
                                   data.schoolName,
+                                  data.guardianMessageTemplate,
                                 ),
                           icon: const Icon(Icons.message_rounded),
                         ),
@@ -413,12 +418,14 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
     AttendanceRecord record,
     String phone,
     String schoolName,
+    String messageTemplate,
   ) async {
-    final text =
-        'السلام عليكم،\n'
-        'ولي أمر الطالب ${record.studentName}، نفيدكم بتسجيل غياب الطالب عن الدوام الصباحي.\n'
-        'التاريخ: ${SchoolDayFormatter.dualInline(_date)}\n'
-        'المدرسة: $schoolName';
+    final text = GuardianAbsenceMessage.render(
+      template: messageTemplate,
+      studentName: record.studentName,
+      date: SchoolDayFormatter.dualInline(_date),
+      schoolName: schoolName,
+    );
     final uri = Uri.https('wa.me', '/$phone', {'text': text});
     try {
       final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -460,6 +467,7 @@ class _AbsenceReportData {
     required this.scopeLabel,
     required this.guardianPhones,
     required this.schoolName,
+    required this.guardianMessageTemplate,
   });
 
   final List<SchoolClass> classes;
@@ -468,4 +476,5 @@ class _AbsenceReportData {
   final String scopeLabel;
   final Map<String, String> guardianPhones;
   final String schoolName;
+  final String guardianMessageTemplate;
 }

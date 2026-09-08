@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/guardian_absence_message.dart';
 import '../../core/providers.dart';
 import '../../core/theme/app_theme.dart';
 
@@ -24,6 +25,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _agentPhone = TextEditingController();
   final _contactPhone = TextEditingController();
   final _whatsappTemplate = TextEditingController();
+  final _guardianAbsenceTemplate = TextEditingController();
   final _backupReminderDays = TextEditingController();
   bool _loading = true;
   bool _saving = false;
@@ -50,6 +52,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _agentPhone.dispose();
     _contactPhone.dispose();
     _whatsappTemplate.dispose();
+    _guardianAbsenceTemplate.dispose();
     _backupReminderDays.dispose();
     super.dispose();
   }
@@ -66,6 +69,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       _whatsappTemplate.text =
           values['whatsapp_template'] ??
           'تقرير الغياب الصباحي\nالتاريخ: {date}\nإجمالي الطلاب: {total}\nالحاضرون: {present}\nالغائبون: {absent}\nالمستأذنون: {excused}\n\nيرجى إرفاق التقرير التفصيلي عند الحاجة.';
+      _guardianAbsenceTemplate.text =
+          values[GuardianAbsenceMessage.settingKey] ??
+          GuardianAbsenceMessage.defaultTemplate;
       _backupReminderDays.text = values['backup_reminder_days'] ?? '7';
       _scanSound = values['scan_sound'] != 'false';
       _scanHaptic = values['scan_haptic'] != 'false';
@@ -329,6 +335,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                         ),
                         const SizedBox(height: 12),
                         TextField(
+                          controller: _guardianAbsenceTemplate,
+                          minLines: 4,
+                          maxLines: 8,
+                          decoration: const InputDecoration(
+                            labelText: 'رسالة ولي أمر الطالب الغائب',
+                            helperText:
+                                'الحقول التلقائية: {student} {date} {school}',
+                            prefixIcon: Icon(Icons.message_outlined),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        TextField(
                           controller: _backupReminderDays,
                           keyboardType: TextInputType.number,
                           decoration: const InputDecoration(
@@ -403,6 +421,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         repository.set('agent_send_method', _agentSendMethod),
         repository.set('contact_phone', _contactPhone.text),
         repository.set('whatsapp_template', _whatsappTemplate.text),
+        repository.set(
+          GuardianAbsenceMessage.settingKey,
+          _guardianAbsenceTemplate.text.trim().isEmpty
+              ? GuardianAbsenceMessage.defaultTemplate
+              : _guardianAbsenceTemplate.text,
+        ),
         repository.set(
           'backup_reminder_days',
           '${int.tryParse(_backupReminderDays.text.trim())?.clamp(1, 365) ?? 7}',

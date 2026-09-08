@@ -116,8 +116,8 @@ try {
         )
         $page = [Regex]::Replace(
             $page,
-            '(<p class="download-meta">)الإصدار [^<]*(</p>)',
-            { param($match) $match.Groups[1].Value + "الإصدار $versionName ($versionCode) · حجم الملف $apkSize · تنزيل مباشر بصيغة APK" + $match.Groups[2].Value }
+            '(<p class="download-meta">[^<]*?)[0-9]+\.[0-9]+\.[0-9]+\s*\([0-9]+\)([^<]*?)[0-9]+(?:\.[0-9]+)?\s*MB([^<]*</p>)',
+            { param($match) $match.Groups[1].Value + "$versionName ($versionCode)" + $match.Groups[2].Value + $apkSize + $match.Groups[3].Value }
         )
         [IO.File]::WriteAllText($downloadPage, $page, [Text.UTF8Encoding]::new($false))
     }

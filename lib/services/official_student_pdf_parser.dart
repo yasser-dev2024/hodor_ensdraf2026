@@ -150,16 +150,16 @@ class OfficialStudentPdfParser {
           .toList();
       if (lines.isEmpty) continue;
 
-      final pageGrade = _valueFollowingLabel(
-        lines,
-        'الصف',
-        RegExp('^$_gradePattern(?:\\s+الابتدائي)?\$'),
-      );
-      final pageClass = _valueFollowingLabel(
-        lines,
-        'الفصل',
-        RegExp(r'^[0-9]{1,2}$'),
-      );
+      final pageGrade =
+          _valueFollowingLabel(
+            lines,
+            'الصف',
+            RegExp('^$_gradePattern(?:\\s+الابتدائي)?\$'),
+          ) ??
+          _gradeBesideLabel(lines.join('\n'));
+      final pageClass =
+          _valueFollowingLabel(lines, 'الفصل', RegExp(r'^[0-9]{1,2}$')) ??
+          _classBesideLabel(lines.join('\n'));
       if (pageGrade != null) currentGrade = _normalizeGrade(pageGrade);
       if (pageClass != null) currentClass = pageClass;
       if (currentGrade == null || currentClass == null) continue;
@@ -171,24 +171,24 @@ class OfficialStudentPdfParser {
 
         var serialIndex = statusEnd;
         final nameLines = <String>[];
-        while (serialIndex < lines.length &&
-            !RegExp(r'^[0-9]{1,3}$').hasMatch(lines[serialIndex])) {
-          if (RegExp(r'[ء-ي]').hasMatch(lines[serialIndex])) {
-            nameLines.add(lines[serialIndex]);
+        while (serialIndex < lines.length) {
+          final line = lines[serialIndex];
+          final serialMatch = RegExp(
+            r'^(.*?)(?:\s+)?([0-9]{1,3})$',
+          ).firstMatch(line);
+          if (serialMatch != null) {
+            final namePart = serialMatch.group(1)!.trim();
+            if (RegExp(r'[ء-ي]').hasMatch(namePart)) {
+              nameLines.add(namePart);
+            }
+            break;
           }
+          if (RegExp(r'[ء-ي]').hasMatch(line)) nameLines.add(line);
           serialIndex++;
         }
         if (serialIndex >= lines.length) break;
 
-        final dateIndex = _lastIndexWhere(
-          lines,
-          recordStart,
-          index,
-          (line) => RegExp(r'^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$').hasMatch(line),
-        );
-        final nationalId = dateIndex == null
-            ? null
-            : _nationalIdBeforeDate(lines, dateIndex, recordStart);
+        final nationalId = _nationalIdBeforeStatus(lines, index, recordStart);
         final name = nameLines.join(' ').replaceAll(RegExp(r'\s+'), ' ').trim();
         if (nationalId != null &&
             name.length >= 2 &&
@@ -203,8 +203,8 @@ class OfficialStudentPdfParser {
   }
 
   static int? _rosterStatusEnd(List<String> lines, int index) {
-    if (lines[index] == 'مستمر في الدراسة') return index + 1;
-    if (lines[index] == 'مستمر في' &&
+    if (lines[index].endsWith('مستمر في الدراسة')) return index + 1;
+    if (lines[index].endsWith('مستمر في') &&
         index + 1 < lines.length &&
         lines[index + 1] == 'الدراسة') {
       return index + 2;
@@ -212,37 +212,44 @@ class OfficialStudentPdfParser {
     return null;
   }
 
-  static String? _nationalIdBeforeDate(
+  static String? _nationalIdBeforeStatus(
     List<String> lines,
-    int dateIndex,
+    int statusIndex,
     int recordStart,
   ) {
-    // The line immediately before the birth date is the nationality. The
-    // identity value before it is commonly wrapped as 9+1 or 7+3 digits.
-    var index = dateIndex - 2;
-    var digitCount = 0;
-    final reversedParts = <String>[];
-    while (index >= recordStart && digitCount < 10) {
-      final part = lines[index];
-      if (!RegExp(r'^[0-9]+$').hasMatch(part)) break;
-      reversedParts.add(part);
-      digitCount += part.length;
-      index--;
-    }
-    if (digitCount != 10) return null;
-    return reversedParts.reversed.join();
-  }
-
-  static int? _lastIndexWhere(
-    List<String> values,
-    int start,
-    int end,
-    bool Function(String value) predicate,
-  ) {
-    for (var index = end - 1; index >= start; index--) {
-      if (predicate(values[index])) return index;
+    final segment = lines.sublist(recordStart, statusIndex + 1).join('\n');
+    final dates = RegExp(
+      r'[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}',
+    ).allMatches(segment).toList();
+    if (dates.isEmpty) return null;
+    final beforeBirthDate = segment.substring(0, dates.last.start);
+    final groups = RegExp(
+      r'[0-9]+',
+    ).allMatches(beforeBirthDate).map((match) => match.group(0)!).toList();
+    var nationalId = '';
+    for (var index = groups.length - 1; index >= 0; index--) {
+      final candidate = groups[index] + nationalId;
+      if (candidate.length == 10) return candidate;
+      if (candidate.length > 10) break;
+      nationalId = candidate;
     }
     return null;
+  }
+
+  static String? _gradeBesideLabel(String page) {
+    final match = RegExp(
+      '($_gradePattern)(?:\\s+الابتدائي)?\\s*الصف|'
+      'الصف\\s*($_gradePattern)(?:\\s+الابتدائي)?',
+    ).firstMatch(page);
+    final value = match?.group(1) ?? match?.group(2);
+    return value == null ? null : _normalizeGrade(value);
+  }
+
+  static String? _classBesideLabel(String page) {
+    final match = RegExp(
+      r'(?:^|\n)([0-9]{1,2})\s*الفصل(?:\n|$)|الفصل\s*([0-9]{1,2})',
+    ).firstMatch(page);
+    return match?.group(1) ?? match?.group(2);
   }
 
   static String? _valueFollowingLabel(
