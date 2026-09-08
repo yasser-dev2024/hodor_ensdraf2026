@@ -50,7 +50,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'يدعم XLSX وXLS وPDF النصي. ملف PDF المصوّر يحتاج إلى تحويل إلى Excel أو PDF نصي.',
+                    'يدعم XLSX وXLS وPDF النصي. أدرج كشف الطلاب أولًا، ثم اختر ملف StudentGuidance لتحديث أرقام أولياء الأمور دون إضافة أسماء زائدة.',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.55, color: Colors.blueGrey),
                   ),
@@ -109,6 +109,18 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                         color: Colors.blueGrey,
                       ),
                     ),
+                    if (_workbook!.guardianContactsOnly) ...[
+                      const SizedBox(height: 10),
+                      const Text(
+                        'تم التعرف على نموذج أرقام أولياء الأمور. سيُحدّث الطلاب الموجودين عبر السجل المدني، ولن تُضاف أسماء زائدة من هذا الملف.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.5,
+                          color: AppColors.blue,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
                     if (_workbook!.sheets.length > 1) ...[
                       const SizedBox(height: 12),
                       DropdownButtonFormField<int>(
@@ -226,7 +238,10 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                 ),
               ),
             ),
-            if (_preview!.errorCount > 0 || _preview!.duplicateCount > 0) ...[
+            if (_preview!.errorCount > 0 ||
+                (_preview!.workbook.guardianContactsOnly
+                    ? _preview!.unmatchedContactCount > 0
+                    : _preview!.duplicateCount > 0)) ...[
               const SizedBox(height: 14),
               Card(
                 child: ExpansionTile(
@@ -234,15 +249,23 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                     Icons.warning_amber_rounded,
                     color: AppColors.excused,
                   ),
-                  title: const Text(
-                    'الصفوف المستبعدة',
+                  title: Text(
+                    _preview!.workbook.guardianContactsOnly
+                        ? 'أرقام لم تُحدّث'
+                        : 'الصفوف المستبعدة',
                     style: TextStyle(fontWeight: FontWeight.w900),
                   ),
                   subtitle: Text(
-                    '${_preview!.duplicateCount} مكرر، ${_preview!.errorCount} به أخطاء',
+                    _preview!.workbook.guardianContactsOnly
+                        ? '${_preview!.unmatchedContactCount} سجلًا غير موجود في كشف الطلاب، ${_preview!.errorCount} به أخطاء'
+                        : '${_preview!.duplicateCount} مكرر، ${_preview!.errorCount} به أخطاء',
                   ),
                   children: _preview!.candidates
-                      .where((row) => !row.canImport)
+                      .where(
+                        (row) => _preview!.workbook.guardianContactsOnly
+                            ? !row.canUpdateGuardianPhone
+                            : !row.canImport,
+                      )
                       .take(20)
                       .map(
                         (row) => ListTile(
@@ -251,11 +274,13 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                             'السطر ${row.sourceRow}: ${row.values[ImportField.studentName] ?? 'بدون اسم'}',
                           ),
                           subtitle: Text(
-                            row.duplicateInFile
+                            row.errors.isNotEmpty
+                                ? row.errors.join('، ')
+                                : row.duplicateInFile
                                 ? 'مكرر داخل الملف'
                                 : row.duplicateInDatabase
                                 ? 'مسجل مسبقًا في قاعدة البيانات'
-                                : row.errors.join('، '),
+                                : 'السجل غير موجود في كشف الطلاب الحالي',
                           ),
                         ),
                       )
@@ -265,9 +290,15 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
             ],
             const SizedBox(height: 18),
             FilledButton.icon(
-              onPressed: _busy || _preview!.validCount == 0 ? null : _import,
+              onPressed: _busy || _preview!.processableCount == 0
+                  ? null
+                  : _import,
               icon: const Icon(Icons.cloud_done_outlined),
-              label: Text('استيراد ${_preview!.validCount} طالبًا'),
+              label: Text(
+                _preview!.workbook.guardianContactsOnly
+                    ? 'تحديث ${_preview!.guardianUpdateCount} رقم ولي أمر'
+                    : 'استيراد ${_preview!.validCount} طالبًا',
+              ),
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(60),
               ),
@@ -364,8 +395,9 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
       refreshData(ref);
       if (mounted) {
         setState(() {
-          _status =
-              'تمت إضافة ${result.imported} طالبًا. تم تجاهل ${result.duplicates} مكرر، وتعذر استيراد ${result.errors} صف.';
+          _status = _preview!.workbook.guardianContactsOnly
+              ? 'تم تحديث ${result.updatedGuardianPhones} رقم ولي أمر. لم يُضف الملف أي اسم جديد، ولم يتطابق ${result.unmatchedContacts} سجلًا مع كشف الطلاب الحالي.'
+              : 'تمت إضافة ${result.imported} طالبًا. تم تحديث ${result.updatedGuardianPhones} رقم ولي أمر، وتجاهل ${result.duplicates} مكرر، وتعذر استيراد ${result.errors} صف.';
           _preview = null;
           _workbook = null;
         });
@@ -405,28 +437,51 @@ class _PreviewStats extends StatelessWidget {
           ),
           const SizedBox(height: 13),
           Row(
-            children: [
-              _ImportStat(
-                label: 'الصفوف',
-                value: preview.totalRows,
-                color: AppColors.navy,
-              ),
-              _ImportStat(
-                label: 'سيضاف',
-                value: preview.validCount,
-                color: AppColors.present,
-              ),
-              _ImportStat(
-                label: 'مكرر',
-                value: preview.duplicateCount,
-                color: AppColors.excused,
-              ),
-              _ImportStat(
-                label: 'أخطاء',
-                value: preview.errorCount,
-                color: AppColors.absent,
-              ),
-            ],
+            children: preview.workbook.guardianContactsOnly
+                ? [
+                    _ImportStat(
+                      label: 'الصفوف',
+                      value: preview.totalRows,
+                      color: AppColors.navy,
+                    ),
+                    _ImportStat(
+                      label: 'سيُحدّث',
+                      value: preview.guardianUpdateCount,
+                      color: AppColors.present,
+                    ),
+                    _ImportStat(
+                      label: 'غير مطابق',
+                      value: preview.unmatchedContactCount,
+                      color: AppColors.excused,
+                    ),
+                    _ImportStat(
+                      label: 'أخطاء',
+                      value: preview.errorCount,
+                      color: AppColors.absent,
+                    ),
+                  ]
+                : [
+                    _ImportStat(
+                      label: 'الصفوف',
+                      value: preview.totalRows,
+                      color: AppColors.navy,
+                    ),
+                    _ImportStat(
+                      label: 'سيضاف',
+                      value: preview.validCount,
+                      color: AppColors.present,
+                    ),
+                    _ImportStat(
+                      label: 'مكرر',
+                      value: preview.duplicateCount,
+                      color: AppColors.excused,
+                    ),
+                    _ImportStat(
+                      label: 'أخطاء',
+                      value: preview.errorCount,
+                      color: AppColors.absent,
+                    ),
+                  ],
           ),
           if (preview.unrecognizedColumns
               .where((value) => value.isNotEmpty)

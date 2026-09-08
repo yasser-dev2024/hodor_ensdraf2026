@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:morning_student_attendance/services/official_student_pdf_parser.dart';
+import 'package:morning_student_attendance/services/student_guidance_workbook_parser.dart';
 
 void main() {
   test('يقرأ سجل الطلاب الرسمي مع التفاف السطور وصيغ الحروف العربية', () {
@@ -150,5 +151,26 @@ void main() {
     ]);
     expect(rows[2][0], 'طالب ثانٍ');
     expect(rows[2][3], '2');
+  });
+
+  test('يحوّل نموذج الإرشاد إلى تحديث جوالات دون خلط رقم الطالب', () {
+    final rows = StudentGuidanceWorkbookParser.parseSheets([
+      [
+        ['', 'Student Info Table'],
+        ['', 'الجوال', 'الفصل', 'رقم الصف', 'اسم الطالب', 'رقم الطالب'],
+        ['', '0501234567', '2', '0430', 'طالب تجريبي', '1234567890'],
+      ],
+    ]);
+
+    expect(rows, isNotNull);
+    expect(rows!.first, StudentGuidanceWorkbookParser.headers);
+    expect(rows[1], [
+      'طالب تجريبي',
+      '1234567890',
+      'الرابع',
+      '2',
+      'المرحلة الابتدائية',
+      '966501234567',
+    ]);
   });
 }

@@ -10,12 +10,14 @@ import 'package:read_pdf_text/read_pdf_text.dart';
 import 'package:sqflite/sqflite.dart';
 
 import '../data/app_database.dart';
+import '../core/saudi_phone_formatter.dart';
 import '../models/import_models.dart';
 import '../repositories/class_repository.dart';
 import '../repositories/student_repository.dart';
 import 'data_protection_service.dart';
 import 'official_student_pdf_parser.dart';
 import 'open_xml_workbook_reader.dart';
+import 'student_guidance_workbook_parser.dart';
 
 class StudentImportService {
   StudentImportService({
@@ -60,6 +62,16 @@ class StudentImportService {
       'الرقم الطلابي',
       'student id',
       'academic number',
+    ],
+    ImportField.guardianPhone: [
+      'جوال ولي الأمر',
+      'جوال ولي الامر',
+      'رقم جوال ولي الأمر',
+      'رقم جوال ولي الامر',
+      'هاتف ولي الأمر',
+      'هاتف ولي الامر',
+      'guardian phone',
+      'parent phone',
     ],
   };
 
@@ -191,6 +203,19 @@ class StudentImportService {
         'ملف Excel لا يحتوي على أوراق قابلة للقراءة.',
       );
     }
+    final guidanceRows = StudentGuidanceWorkbookParser.parseSheets(
+      sheets.map((sheet) => sheet.rows),
+    );
+    if (guidanceRows != null) {
+      return ImportWorkbook(
+        fileName: fileName,
+        sourceType: 'xlsx',
+        sheets: [
+          ImportSheetData(name: 'أرقام أولياء الأمور', rows: guidanceRows),
+        ],
+        guardianContactsOnly: true,
+      );
+    }
     final officialRows = OfficialStudentPdfParser.parseWorkbookSheets(
       sheets.map((sheet) => sheet.rows),
     );
@@ -220,6 +245,19 @@ class StudentImportService {
     }
     if (sheets.isEmpty) {
       throw const FormatException('ملف XLS لا يحتوي على أوراق قابلة للقراءة.');
+    }
+    final guidanceRows = StudentGuidanceWorkbookParser.parseSheets(
+      sheets.map((sheet) => sheet.rows),
+    );
+    if (guidanceRows != null) {
+      return ImportWorkbook(
+        fileName: fileName,
+        sourceType: 'xls',
+        sheets: [
+          ImportSheetData(name: 'أرقام أولياء الأمور', rows: guidanceRows),
+        ],
+        guardianContactsOnly: true,
+      );
     }
     final officialRows = OfficialStudentPdfParser.parseWorkbookSheets(
       sheets.map((sheet) => sheet.rows),
@@ -283,6 +321,12 @@ class StudentImportService {
       }
       final name = values[ImportField.studentName] ?? '';
       final nationalId = values[ImportField.nationalId] ?? '';
+      final guardianPhone = values[ImportField.guardianPhone] ?? '';
+      if (guardianPhone.isNotEmpty) {
+        values[ImportField.guardianPhone] = SaudiPhoneFormatter.normalize(
+          guardianPhone,
+        );
+      }
       final normalizedId = DataProtectionService.normalizeNationalId(
         nationalId,
       );
@@ -290,6 +334,12 @@ class StudentImportService {
       if (name.length < 2) errors.add('اسم الطالب مفقود أو قصير');
       if (normalizedId.length != 10) {
         errors.add('السجل المدني يجب أن يتكون من 10 أرقام');
+      }
+      if (workbook.guardianContactsOnly && guardianPhone.isEmpty) {
+        errors.add('رقم جوال ولي الأمر مفقود');
+      } else if (guardianPhone.isNotEmpty &&
+          !SaudiPhoneFormatter.isValidSaudiMobile(guardianPhone)) {
+        errors.add('رقم جوال ولي الأمر غير صالح');
       }
       final duplicateInFile =
           normalizedId.isNotEmpty && !seenIds.add(normalizedId);
@@ -325,20 +375,27 @@ class StudentImportService {
     required String userId,
   }) async {
     var duplicates = preview.candidates
-        .where((row) => row.duplicateInFile || row.duplicateInDatabase)
+        .where(
+          (row) =>
+              row.duplicateInFile ||
+              (row.duplicateInDatabase && !row.canUpdateGuardianPhone),
+        )
         .length;
     final errors = preview.candidates
         .where(
           (row) =>
               !row.duplicateInFile &&
-              !row.duplicateInDatabase &&
-              row.errors.isNotEmpty,
+              row.errors.isNotEmpty &&
+              (preview.workbook.guardianContactsOnly ||
+                  !row.duplicateInDatabase),
         )
         .length;
     await _saveMappings(preview.headers, preview.columnMapping);
     final resolvedScopes = <String, (String?, String?)>{};
     final drafts = <StudentCreateDraft>[];
-    for (final candidate in preview.candidates.where((row) => row.canImport)) {
+    for (final candidate in preview.candidates.where(
+      (row) => row.canImport && !preview.workbook.guardianContactsOnly,
+    )) {
       final values = candidate.values;
       final gradeName = values[ImportField.grade]?.trim() ?? '';
       final className = values[ImportField.schoolClass]?.trim() ?? '';
@@ -369,9 +426,19 @@ class StudentImportService {
           gradeId: scope.$1,
           classId: scope.$2,
           academicNumber: values[ImportField.academicNumber],
+          guardianPhone: values[ImportField.guardianPhone],
         ),
       );
     }
+    final guardianContacts = <String, String>{
+      for (final candidate in preview.candidates.where(
+        (row) => row.canUpdateGuardianPhone,
+      ))
+        candidate.values[ImportField.nationalId]!:
+            candidate.values[ImportField.guardianPhone]!,
+    };
+    final updatedGuardianPhones = await _students
+        .updateGuardianPhonesByNationalId(guardianContacts, userId: userId);
     final batch = await _students.createBatch(drafts, userId: userId);
     final imported = batch.created;
     duplicates += batch.duplicates;
@@ -386,12 +453,16 @@ class StudentImportService {
         'imported': imported,
         'duplicates': duplicates,
         'errors': errors,
+        'updated_guardian_phones': updatedGuardianPhones,
+        'unmatched_contacts': preview.unmatchedContactCount,
       }),
     });
     return ImportResult(
       imported: imported,
       duplicates: duplicates,
       errors: errors,
+      updatedGuardianPhones: updatedGuardianPhones,
+      unmatchedContacts: preview.unmatchedContactCount,
     );
   }
 

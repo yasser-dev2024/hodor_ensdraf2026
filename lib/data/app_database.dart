@@ -6,7 +6,7 @@ class AppDatabase {
 
   Database db;
   final String? path;
-  static const schemaVersion = 4;
+  static const schemaVersion = 5;
 
   static Future<AppDatabase> open() async {
     final root = await getDatabasesPath();
@@ -132,6 +132,13 @@ class AppDatabase {
         ''');
       });
     }
+    if (oldVersion < 5 && newVersion >= 5) {
+      await db.transaction((txn) async {
+        await txn.execute(
+          'ALTER TABLE students ADD COLUMN guardian_phone_encrypted TEXT',
+        );
+      });
+    }
   }
 
   static Future<void> _createSchema(Database db) async {
@@ -194,6 +201,7 @@ class AppDatabase {
           grade_id TEXT REFERENCES grades(id) ON DELETE RESTRICT,
           class_id TEXT REFERENCES classes(id) ON DELETE RESTRICT,
           academic_number TEXT,
+          guardian_phone_encrypted TEXT,
           barcode_token TEXT NOT NULL UNIQUE,
           photo_path TEXT,
           status TEXT NOT NULL DEFAULT 'active',

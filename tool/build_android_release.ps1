@@ -27,11 +27,34 @@ if (-not $resolvedTemporaryRoot.StartsWith($resolvedTemp, [StringComparison]::Or
 }
 New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
 
+# Student source documents are never build inputs. Remove any copies left by
+# older versions of this script before synchronizing the source tree.
+$temporaryPrefix = $resolvedTemporaryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+$studentFilePatterns = @(
+    "EL_StudentInfoReport*.pdf",
+    "EL_StudentInfoReport*.xls",
+    "EL_StudentInfoReport*.xlsx",
+    "StudentGuidance*.xls",
+    "eb9a1590-a84e-49a4-864d-32c9e8a15680.png"
+)
+foreach ($pattern in $studentFilePatterns) {
+    foreach ($candidate in [IO.Directory]::GetFiles($resolvedTemporaryRoot, $pattern, [IO.SearchOption]::TopDirectoryOnly)) {
+        $resolvedCandidate = [IO.Path]::GetFullPath($candidate)
+        if (-not $resolvedCandidate.StartsWith($temporaryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unexpected temporary student file path."
+        }
+        [IO.File]::Delete($resolvedCandidate)
+    }
+}
+
 # Mirror source into a stable ASCII path. Build caches stay in this workspace,
 # while private signing material and issued activation keys are excluded.
 & robocopy.exe $sourceRoot $temporaryRoot /MIR /R:2 /W:1 `
     /XD .git build .dart_tool .gradle releases issued_activation_keys `
     /XF .activation_private_key key.properties release-key.jks windows-cacerts `
+        "EL_StudentInfoReport*.pdf" "EL_StudentInfoReport*.xls" `
+        "EL_StudentInfoReport*.xlsx" `
+        "StudentGuidance*.xls" "eb9a1590-a84e-49a4-864d-32c9e8a15680.png" `
     /NFL /NDL /NJH /NJS /NP | Out-Null
 $copyExitCode = $LASTEXITCODE
 if ($copyExitCode -gt 7) {
@@ -85,6 +108,16 @@ try {
             $page,
             'href="releases/morning-attendance-v[^"?]+\.apk(?:\?v=[^"]+)?"',
             "href=`"releases/morning-attendance-v$versionName.apk?v=$apkHash`""
+        )
+        $page = [Regex]::Replace(
+            $page,
+            'download="morning-attendance-v[^"]+\.apk"',
+            "download=`"morning-attendance-v$versionName.apk`""
+        )
+        $page = [Regex]::Replace(
+            $page,
+            '(<p class="download-meta">)الإصدار [^<]*(</p>)',
+            { param($match) $match.Groups[1].Value + "الإصدار $versionName ($versionCode) · حجم الملف $apkSize · تنزيل مباشر بصيغة APK" + $match.Groups[2].Value }
         )
         [IO.File]::WriteAllText($downloadPage, $page, [Text.UTF8Encoding]::new($false))
     }

@@ -13,6 +13,7 @@ class Student {
     this.classId,
     this.className,
     this.academicNumber,
+    this.guardianPhone,
     this.photoPath,
     this.transferStatus,
     this.deletedAt,
@@ -28,6 +29,7 @@ class Student {
   final String? classId;
   final String? className;
   final String? academicNumber;
+  final String? guardianPhone;
   final String? photoPath;
   final String status;
   final String? transferStatus;
@@ -55,6 +57,7 @@ class Student {
     String? classId,
     String? className,
     String? academicNumber,
+    String? guardianPhone,
     String? photoPath,
     String? status,
     String? transferStatus,
@@ -72,6 +75,7 @@ class Student {
       classId: classId ?? this.classId,
       className: className ?? this.className,
       academicNumber: academicNumber ?? this.academicNumber,
+      guardianPhone: guardianPhone ?? this.guardianPhone,
       photoPath: photoPath ?? this.photoPath,
       status: status ?? this.status,
       transferStatus: transferStatus ?? this.transferStatus,

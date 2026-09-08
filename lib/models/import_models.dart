@@ -5,6 +5,7 @@ enum ImportField {
   grade('grade', 'الصف'),
   schoolClass('class', 'الفصل'),
   academicNumber('academic_number', 'الرقم الأكاديمي'),
+  guardianPhone('guardian_phone', 'جوال ولي الأمر'),
   ignored('ignored', 'تجاهل العمود');
 
   const ImportField(this.key, this.label);
@@ -23,10 +24,12 @@ class ImportWorkbook {
     required this.fileName,
     required this.sourceType,
     required this.sheets,
+    this.guardianContactsOnly = false,
   });
   final String fileName;
   final String sourceType;
   final List<ImportSheetData> sheets;
+  final bool guardianContactsOnly;
 }
 
 class ImportCandidate {
@@ -44,6 +47,12 @@ class ImportCandidate {
   final bool duplicateInDatabase;
   bool get canImport =>
       errors.isEmpty && !duplicateInFile && !duplicateInDatabase;
+  bool get canUpdateGuardianPhone =>
+      errors.isEmpty &&
+      !duplicateInFile &&
+      duplicateInDatabase &&
+      (values[ImportField.guardianPhone]?.isNotEmpty ?? false);
+  bool get canProcess => canImport || canUpdateGuardianPhone;
 }
 
 class ImportPreview {
@@ -65,6 +74,20 @@ class ImportPreview {
   final List<String> unrecognizedColumns;
 
   int get validCount => candidates.where((row) => row.canImport).length;
+  int get guardianUpdateCount =>
+      candidates.where((row) => row.canUpdateGuardianPhone).length;
+  int get processableCount =>
+      workbook.guardianContactsOnly ? guardianUpdateCount : validCount;
+  int get unmatchedContactCount => workbook.guardianContactsOnly
+      ? candidates
+            .where(
+              (row) =>
+                  row.errors.isEmpty &&
+                  !row.duplicateInFile &&
+                  !row.duplicateInDatabase,
+            )
+            .length
+      : 0;
   int get duplicateCount => candidates
       .where((row) => row.duplicateInFile || row.duplicateInDatabase)
       .length;
@@ -77,8 +100,12 @@ class ImportResult {
     required this.imported,
     required this.duplicates,
     required this.errors,
+    this.updatedGuardianPhones = 0,
+    this.unmatchedContacts = 0,
   });
   final int imported;
   final int duplicates;
   final int errors;
+  final int updatedGuardianPhones;
+  final int unmatchedContacts;
 }

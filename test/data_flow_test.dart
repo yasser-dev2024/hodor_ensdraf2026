@@ -507,6 +507,142 @@ void main() {
     expect(logs.map((row) => row['action']), ['day_close', 'day_reopen']);
   });
 
+  test(
+    'يغلق الأيام السابقة المفتوحة تلقائيًا ويترك اليوم الجديد مفتوحًا',
+    () async {
+      final previousDay = SchoolDayFormatter.key(
+        DateTime.now().subtract(const Duration(days: 1)),
+      );
+      final today = attendance.dayKey();
+      final absentStudent = await students.create(
+        name: 'طالب غائب في اليوم السابق',
+        nationalId: '1055555560',
+        userId: managerId,
+      );
+      final remainingStudent = await students.create(
+        name: 'طالب حاضر تلقائيًا في اليوم السابق',
+        nationalId: '1055555561',
+        userId: managerId,
+      );
+      await database.db.update(
+        'students',
+        {'created_at': '${previousDay}T04:00:00.000Z'},
+        where: 'id IN (?, ?)',
+        whereArgs: [absentStudent.id, remainingStudent.id],
+      );
+      await attendance.record(
+        student: absentStudent,
+        status: AttendanceStatus.absent,
+        userId: managerId,
+        attendanceDate: previousDay,
+      );
+
+      final closed = await attendance.autoClosePreviousOpenDays(
+        userId: managerId,
+        markUnregisteredPresent: true,
+      );
+
+      expect(closed, [previousDay]);
+      expect(await attendance.isDayClosed(previousDay), isTrue);
+      expect(await attendance.isDayClosed(today), isFalse);
+      expect(
+        (await attendance.getForStudent(
+          remainingStudent.id,
+          date: previousDay,
+        ))?.status,
+        AttendanceStatus.present,
+      );
+      final logs = await database.db.query(
+        'audit_logs',
+        where: 'action = ?',
+        whereArgs: ['day_auto_close'],
+      );
+      expect(logs.single['entity_id'], previousDay);
+
+      final secondPass = await attendance.autoClosePreviousOpenDays(
+        userId: managerId,
+        markUnregisteredPresent: true,
+      );
+      expect(secondPass, isEmpty);
+    },
+  );
+
+  test('الإغلاق التلقائي لا يغلق سجل اليوم الحالي', () async {
+    final student = await students.create(
+      name: 'طالب اليوم الحالي',
+      nationalId: '1055555562',
+      userId: managerId,
+    );
+    await attendance.record(
+      student: student,
+      status: AttendanceStatus.absent,
+      userId: managerId,
+    );
+
+    expect(
+      await attendance.autoClosePreviousOpenDays(userId: managerId),
+      isEmpty,
+    );
+    expect(await attendance.isDayClosed(attendance.dayKey()), isFalse);
+  });
+
+  test('يغلق يوم العمل السابق حتى إن لم تسجل فيه أي حالة', () async {
+    final now = DateTime.now();
+    var previousSchoolDay = now.subtract(const Duration(days: 1));
+    while (previousSchoolDay.weekday == DateTime.friday ||
+        previousSchoolDay.weekday == DateTime.saturday) {
+      previousSchoolDay = previousSchoolDay.subtract(const Duration(days: 1));
+    }
+    final previousDay = SchoolDayFormatter.key(previousSchoolDay);
+    final student = await students.create(
+      name: 'طالب في يوم بلا حالات مسجلة',
+      nationalId: '1055555563',
+      userId: managerId,
+    );
+    await database.db.update(
+      'students',
+      {'created_at': '${previousDay}T04:00:00.000Z'},
+      where: 'id = ?',
+      whereArgs: [student.id],
+    );
+
+    final closed = await attendance.autoClosePreviousOpenDays(
+      userId: managerId,
+      now: now,
+      markUnregisteredPresent: true,
+      previouslyActiveDate: previousDay,
+    );
+
+    expect(closed, [previousDay]);
+    expect(await attendance.isDayClosed(previousDay), isTrue);
+    expect(
+      (await attendance.getForStudent(student.id, date: previousDay))?.status,
+      AttendanceStatus.present,
+    );
+  });
+
+  test('لا ينشئ إغلاقًا وهميًا ليوم إجازة سابق بلا سجلات', () async {
+    final now = DateTime.now();
+    final previousDay = SchoolDayFormatter.key(
+      now.subtract(const Duration(days: 1)),
+    );
+    await database.db.insert('school_days', {
+      'day': previousDay,
+      'type': 'holiday',
+      'note': 'إجازة اختبارية',
+    });
+
+    final closed = await attendance.autoClosePreviousOpenDays(
+      userId: managerId,
+      now: now,
+      markUnregisteredPresent: true,
+      previouslyActiveDate: previousDay,
+    );
+
+    expect(closed, isEmpty);
+    expect(await attendance.isDayClosed(previousDay), isFalse);
+  });
+
   test('يكتشف عناوين مرنة ويستورد 500 طالب بلا تكرار', () async {
     final rows = <List<String>>[
       ['شعار المدرسة'],
@@ -557,4 +693,88 @@ void main() {
     expect(summary.registered, 30);
     expect(summary.remaining, 470);
   });
+
+  test(
+    'يحدّث جوال ولي الأمر للطالب الموجود دون تغيير الباركود أو إضافة اسم زائد',
+    () async {
+      final student = await students.create(
+        name: 'طالب موجود',
+        nationalId: '1066666666',
+        userId: managerId,
+      );
+      final originalBarcode = student.barcodeToken;
+      final workbook = ImportWorkbook(
+        fileName: 'StudentGuidance.xls',
+        sourceType: 'xls',
+        guardianContactsOnly: true,
+        sheets: const [
+          ImportSheetData(
+            name: 'أرقام أولياء الأمور',
+            rows: [
+              [
+                'اسم الطالب',
+                'السجل المدني',
+                'الصف',
+                'الفصل',
+                'المرحلة',
+                'جوال ولي الأمر',
+              ],
+              [
+                'طالب موجود',
+                '1066666666',
+                'الرابع',
+                '1',
+                'المرحلة الابتدائية',
+                '0501234567',
+              ],
+              [
+                'اسم زائد غير موجود',
+                '1066666667',
+                'الرابع',
+                '1',
+                'المرحلة الابتدائية',
+                '0551234567',
+              ],
+            ],
+          ),
+        ],
+      );
+
+      final preview = await StudentImportService(
+        database: database,
+        students: students,
+        classes: classes,
+      ).preview(workbook);
+      expect(preview.guardianUpdateCount, 1);
+      expect(preview.unmatchedContactCount, 1);
+      expect(preview.processableCount, 1);
+
+      final result = await StudentImportService(
+        database: database,
+        students: students,
+        classes: classes,
+      ).import(preview, userId: managerId);
+
+      expect(result.imported, 0);
+      expect(result.updatedGuardianPhones, 1);
+      expect(result.unmatchedContacts, 1);
+      expect(await students.getAll(), hasLength(1));
+      final updated = (await students.getById(student.id))!;
+      expect(updated.guardianPhone, '966501234567');
+      expect(updated.barcodeToken, originalBarcode);
+      expect(await students.guardianPhonesForStudentIds([student.id]), {
+        student.id: '966501234567',
+      });
+      final raw =
+          (await database.db.query(
+                'students',
+                columns: ['guardian_phone_encrypted'],
+                where: 'id = ?',
+                whereArgs: [student.id],
+              )).single['guardian_phone_encrypted']
+              as String;
+      expect(raw, isNot('966501234567'));
+      expect(raw, isNot(contains('0501234567')));
+    },
+  );
 }

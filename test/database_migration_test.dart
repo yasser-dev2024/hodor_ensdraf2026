@@ -138,4 +138,18 @@ void main() {
       containsAll(['token', 'student_id', 'source', 'created_by']),
     );
   });
+
+  test('يرقي قاعدة v4 إلى v5 ويضيف جوال ولي الأمر المشفر', () async {
+    final db = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    addTearDown(db.close);
+    await db.execute('CREATE TABLE students (id TEXT PRIMARY KEY)');
+
+    await AppDatabase.upgradeSchemaForTesting(db, 4, 5);
+
+    final columns = await db.rawQuery('PRAGMA table_info(students)');
+    expect(
+      columns.map((row) => row['name']),
+      contains('guardian_phone_encrypted'),
+    );
+  });
 }

@@ -528,7 +528,92 @@ class AttendanceRepository {
     bool markUnregisteredPresent = false,
   }) async {
     await _requireManager(userId);
-    final target = date ?? dayKey();
+    final target = date == null ? dayKey() : _validatedDayKey(date);
+    await _closeDay(
+      userId: userId,
+      target: target,
+      markUnregisteredPresent: markUnregisteredPresent,
+      automatic: false,
+    );
+  }
+
+  /// Closes every previous attendance day that contains records and was left
+  /// open, plus the last active work day even when it has no records. This is
+  /// intentionally separate from [closeDay]: a signed-in active user may
+  /// trigger the automatic rollover, while manual closing and reopening remain
+  /// manager-only operations.
+  Future<List<String>> autoClosePreviousOpenDays({
+    required String userId,
+    DateTime? now,
+    bool markUnregisteredPresent = false,
+    String? previouslyActiveDate,
+  }) async {
+    await _requireActiveUser(userId);
+    final today = dayKey(now);
+    final rows = await _database.db.rawQuery(
+      '''
+      SELECT DISTINCT a.attendance_date
+      FROM attendance a
+      LEFT JOIN closed_days cd
+        ON cd.attendance_date = a.attendance_date
+      WHERE a.attendance_date < ?
+        AND (cd.attendance_date IS NULL OR cd.reopened_at IS NOT NULL)
+      ORDER BY a.attendance_date
+      ''',
+      [today],
+    );
+    final candidates = rows
+        .map((row) => _validatedDayKey(row['attendance_date'] as String))
+        .toSet();
+    if (previouslyActiveDate != null && previouslyActiveDate.isNotEmpty) {
+      String? activeDate;
+      try {
+        activeDate = _validatedDayKey(previouslyActiveDate);
+      } on FormatException {
+        // A damaged optional setting must not block the new attendance day.
+      }
+      if (activeDate != null &&
+          activeDate.compareTo(today) < 0 &&
+          !await isDayClosed(activeDate) &&
+          await _isScheduledSchoolDay(activeDate)) {
+        candidates.add(activeDate);
+      }
+    }
+    final closedDates = <String>[];
+    final sortedCandidates = candidates.toList()..sort();
+    for (final target in sortedCandidates) {
+      await _closeDay(
+        userId: userId,
+        target: target,
+        markUnregisteredPresent: markUnregisteredPresent,
+        automatic: true,
+      );
+      closedDates.add(target);
+    }
+    return closedDates;
+  }
+
+  Future<bool> _isScheduledSchoolDay(String date) async {
+    final overrides = await _database.db.query(
+      'school_days',
+      columns: const ['type'],
+      where: 'day = ?',
+      whereArgs: [date],
+      limit: 1,
+    );
+    if (overrides.isNotEmpty) {
+      return const {'school', 'exam'}.contains(overrides.single['type']);
+    }
+    final day = SchoolDayFormatter.parseKey(date);
+    return day.weekday != DateTime.friday && day.weekday != DateTime.saturday;
+  }
+
+  Future<void> _closeDay({
+    required String userId,
+    required String target,
+    required bool markUnregisteredPresent,
+    required bool automatic,
+  }) async {
     if (await isDayClosed(target)) {
       throw StateError('هذا اليوم مغلق مسبقًا.');
     }
@@ -545,7 +630,9 @@ class AttendanceRepository {
             'recorded_at': now,
             'recorded_by': userId,
             'class_id_snapshot': student['class_id'],
-            'note': 'حضور تلقائي عند إغلاق اليوم بعد تسجيل الغياب والاستئذان',
+            'note': automatic
+                ? 'حضور تلقائي عند ترحيل اليوم السابق وإغلاقه'
+                : 'حضور تلقائي عند إغلاق اليوم بعد تسجيل الغياب والاستئذان',
             'updated_at': now,
           });
         }
@@ -555,7 +642,10 @@ class AttendanceRepository {
           'entity_id': target,
           'user_id': userId,
           'occurred_at': now,
-          'new_value': jsonEncode({'count': remaining.length}),
+          'new_value': jsonEncode({
+            'count': remaining.length,
+            'automatic_day_rollover': automatic,
+          }),
         });
       });
     }
@@ -590,7 +680,7 @@ class AttendanceRepository {
         'snapshot_json': snapshot,
       }, conflictAlgorithm: ConflictAlgorithm.replace);
       await txn.insert('audit_logs', {
-        'action': 'day_close',
+        'action': automatic ? 'day_auto_close' : 'day_close',
         'entity_type': 'attendance_day',
         'entity_id': target,
         'user_id': userId,
@@ -669,6 +759,19 @@ class AttendanceRepository {
     );
     if (rows.isEmpty || rows.first['role'] != 'manager') {
       throw StateError('هذه العملية متاحة للمدير فقط.');
+    }
+  }
+
+  Future<void> _requireActiveUser(String userId) async {
+    final rows = await _database.db.query(
+      'users',
+      columns: const ['id'],
+      where: 'id = ? AND active = 1',
+      whereArgs: [userId],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      throw StateError('المستخدم غير نشط أو غير موجود.');
     }
   }
 }

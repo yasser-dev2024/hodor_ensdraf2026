@@ -5,6 +5,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../core/providers.dart';
+import '../../core/saudi_phone_formatter.dart';
 import '../../core/theme/app_theme.dart';
 import '../../models/school_class.dart';
 import '../../models/student.dart';
@@ -25,6 +26,7 @@ class _StudentFormScreenState extends ConsumerState<StudentFormScreen> {
   late final TextEditingController _nationalId;
   late final TextEditingController _stage;
   late final TextEditingController _academicNumber;
+  late final TextEditingController _guardianPhone;
   String? _classId;
   String? _selectedPhotoSource;
   bool _removePhoto = false;
@@ -44,6 +46,7 @@ class _StudentFormScreenState extends ConsumerState<StudentFormScreen> {
     _academicNumber = TextEditingController(
       text: student?.academicNumber ?? '',
     );
+    _guardianPhone = TextEditingController(text: student?.guardianPhone ?? '');
     _classId = student?.classId;
     _classes = ref.read(classRepositoryProvider).getClasses();
   }
@@ -54,6 +57,7 @@ class _StudentFormScreenState extends ConsumerState<StudentFormScreen> {
     _nationalId.dispose();
     _stage.dispose();
     _academicNumber.dispose();
+    _guardianPhone.dispose();
     super.dispose();
   }
 
@@ -172,6 +176,32 @@ class _StudentFormScreenState extends ConsumerState<StudentFormScreen> {
                           labelText: 'الرقم الأكاديمي (اختياري)',
                           prefixIcon: Icon(Icons.numbers_rounded),
                         ),
+                      ),
+                      const SizedBox(height: 13),
+                      TextFormField(
+                        controller: _guardianPhone,
+                        keyboardType: TextInputType.phone,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.allow(
+                            RegExp(r'[0-9٠-٩۰-۹+ ]'),
+                          ),
+                          LengthLimitingTextInputFormatter(18),
+                        ],
+                        textInputAction: TextInputAction.next,
+                        decoration: const InputDecoration(
+                          labelText: 'جوال ولي الأمر (اختياري)',
+                          prefixIcon: Icon(Icons.phone_android_rounded),
+                          helperText:
+                              'يُحفظ مشفرًا. يقبل 05xxxxxxxx أو 9665xxxxxxxx.',
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return null;
+                          }
+                          return SaudiPhoneFormatter.isValidSaudiMobile(value)
+                              ? null
+                              : 'أدخل رقم جوال سعوديًا صحيحًا';
+                        },
                       ),
                       const SizedBox(height: 13),
                       TextFormField(
@@ -305,6 +335,7 @@ class _StudentFormScreenState extends ConsumerState<StudentFormScreen> {
           classId: selectedClass?.id,
           className: selectedClass?.name,
           academicNumber: _academicNumber.text.trim(),
+          guardianPhone: _guardianPhone.text.trim(),
           photoPath: photoPath,
           status: old.status,
           transferStatus: old.transferStatus,
@@ -328,6 +359,7 @@ class _StudentFormScreenState extends ConsumerState<StudentFormScreen> {
               gradeId: selectedClass?.gradeId,
               classId: selectedClass?.id,
               academicNumber: _academicNumber.text,
+              guardianPhone: _guardianPhone.text,
               photoPath: photoPath,
               forcedId: _studentId,
               userId: user.id,

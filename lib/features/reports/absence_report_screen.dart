@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/providers.dart';
 import '../../core/school_day_formatter.dart';
@@ -42,6 +43,14 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
         .read(attendanceRepositoryProvider)
         .getDaily(date: _dateKey, classId: _classId);
     final absentees = ReportService.absentOnly(records);
+    final guardianPhones = await ref
+        .read(studentRepositoryProvider)
+        .guardianPhonesForStudentIds(
+          absentees.map((record) => record.studentId),
+        );
+    final schoolName =
+        await ref.read(settingsRepositoryProvider).get('school_name') ??
+        'المدرسة';
     var scopeLabel = 'جميع الفصول';
     for (final schoolClass in classes) {
       if (schoolClass.id == _classId) {
@@ -54,6 +63,8 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
       records: records,
       absentees: absentees,
       scopeLabel: scopeLabel,
+      guardianPhones: guardianPhones,
+      schoolName: schoolName,
     );
   }
 
@@ -298,10 +309,43 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
                           data.absentees[index].studentName,
                           style: const TextStyle(fontWeight: FontWeight.w900),
                         ),
-                        subtitle: Text(data.absentees[index].classLabel),
-                        trailing: const Icon(
-                          Icons.person_off_outlined,
-                          color: AppColors.absent,
+                        subtitle: Text(
+                          [
+                            data.absentees[index].classLabel,
+                            if (data.guardianPhones[data
+                                    .absentees[index]
+                                    .studentId] ==
+                                null)
+                              'رقم ولي الأمر غير مسجل',
+                          ].where((value) => value.isNotEmpty).join('\n'),
+                        ),
+                        isThreeLine:
+                            data.guardianPhones[data
+                                    .absentees[index]
+                                    .studentId] ==
+                                null,
+                        trailing: IconButton.filledTonal(
+                          tooltip:
+                              data.guardianPhones[data
+                                      .absentees[index]
+                                      .studentId] ==
+                                  null
+                              ? 'رقم ولي الأمر غير مسجل'
+                              : 'إرسال رسالة لولي الأمر',
+                          onPressed:
+                              data.guardianPhones[data
+                                      .absentees[index]
+                                      .studentId] ==
+                                  null
+                              ? null
+                              : () => _sendGuardianMessage(
+                                  data.absentees[index],
+                                  data.guardianPhones[data
+                                      .absentees[index]
+                                      .studentId]!,
+                                  data.schoolName,
+                                ),
+                          icon: const Icon(Icons.message_rounded),
                         ),
                       ),
                     ),
@@ -365,6 +409,33 @@ class _AbsenceReportScreenState extends ConsumerState<AbsenceReportScreen> {
     );
   });
 
+  Future<void> _sendGuardianMessage(
+    AttendanceRecord record,
+    String phone,
+    String schoolName,
+  ) async {
+    final text =
+        'السلام عليكم،\n'
+        'ولي أمر الطالب ${record.studentName}، نفيدكم بتسجيل غياب الطالب عن الدوام الصباحي.\n'
+        'التاريخ: ${SchoolDayFormatter.dualInline(_date)}\n'
+        'المدرسة: $schoolName';
+    final uri = Uri.https('wa.me', '/$phone', {'text': text});
+    try {
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!opened && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر فتح واتساب على هذا الجهاز.')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر فتح رسالة ولي الأمر: $error')),
+        );
+      }
+    }
+  }
+
   Future<void> _run(Future<void> Function() action) async {
     setState(() => _busy = true);
     try {
@@ -387,10 +458,14 @@ class _AbsenceReportData {
     required this.records,
     required this.absentees,
     required this.scopeLabel,
+    required this.guardianPhones,
+    required this.schoolName,
   });
 
   final List<SchoolClass> classes;
   final List<AttendanceRecord> records;
   final List<AttendanceRecord> absentees;
   final String scopeLabel;
+  final Map<String, String> guardianPhones;
+  final String schoolName;
 }

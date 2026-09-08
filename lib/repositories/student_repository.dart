@@ -4,6 +4,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/app_database.dart';
+import '../core/saudi_phone_formatter.dart';
 import '../models/academic_year.dart';
 import '../models/student.dart';
 import '../models/student_transfer.dart';
@@ -29,6 +30,7 @@ class StudentCreateDraft {
     this.gradeId,
     this.classId,
     this.academicNumber,
+    this.guardianPhone,
     this.photoPath,
   });
 
@@ -38,6 +40,7 @@ class StudentCreateDraft {
   final String? gradeId;
   final String? classId;
   final String? academicNumber;
+  final String? guardianPhone;
   final String? photoPath;
 }
 
@@ -281,6 +284,80 @@ class StudentRepository {
     return existing;
   }
 
+  Future<int> updateGuardianPhonesByNationalId(
+    Map<String, String> contacts, {
+    required String userId,
+  }) async {
+    await _requireManager(userId);
+    if (contacts.isEmpty) return 0;
+    final prepared = <(String, String)>[];
+    for (final entry in contacts.entries) {
+      final nationalId = DataProtectionService.normalizeNationalId(entry.key);
+      final phone = SaudiPhoneFormatter.normalize(entry.value);
+      if (!RegExp(r'^\d{10}$').hasMatch(nationalId)) continue;
+      if (!SaudiPhoneFormatter.isValidSaudiMobile(phone)) {
+        throw const FormatException(
+          'يحتوي ملف جهات الاتصال على رقم جوال غير صالح.',
+        );
+      }
+      prepared.add((
+        await _protection.searchableHash(nationalId),
+        await _protection.encrypt(phone),
+      ));
+    }
+    if (prepared.isEmpty) return 0;
+    final now = DateTime.now().toUtc().toIso8601String();
+    return _database.db.transaction((txn) async {
+      var updated = 0;
+      for (final (nationalIdHash, encryptedPhone) in prepared) {
+        updated += await txn.update(
+          'students',
+          {'guardian_phone_encrypted': encryptedPhone, 'updated_at': now},
+          where: 'national_id_hash = ?',
+          whereArgs: [nationalIdHash],
+        );
+      }
+      await _audit(
+        txn,
+        'student_guardian_phone_import',
+        'student_contacts',
+        null,
+        userId,
+        null,
+        {'updated': updated},
+      );
+      return updated;
+    });
+  }
+
+  Future<Map<String, String>> guardianPhonesForStudentIds(
+    Iterable<String> studentIds,
+  ) async {
+    final ids = studentIds.where((id) => id.isNotEmpty).toSet().toList();
+    if (ids.isEmpty) return const {};
+    final result = <String, String>{};
+    const batchSize = 400;
+    for (var offset = 0; offset < ids.length; offset += batchSize) {
+      final end = (offset + batchSize).clamp(0, ids.length);
+      final batch = ids.sublist(offset, end);
+      final placeholders = List.filled(batch.length, '?').join(',');
+      final rows = await _database.db.rawQuery('''
+        SELECT id, guardian_phone_encrypted
+        FROM students
+        WHERE id IN ($placeholders)
+          AND guardian_phone_encrypted IS NOT NULL
+          AND TRIM(guardian_phone_encrypted) <> ''
+        ''', batch);
+      for (final row in rows) {
+        final phone = await _decryptGuardianPhone(
+          row['guardian_phone_encrypted'] as String?,
+        );
+        if (phone != null) result[row['id'] as String] = phone;
+      }
+    }
+    return result;
+  }
+
   Future<BulkStudentCreateResult> createBatch(
     List<StudentCreateDraft> drafts, {
     required String userId,
@@ -295,6 +372,7 @@ class StudentRepository {
         nationalId: DataProtectionService.normalizeNationalId(draft.nationalId),
         stage: draft.stage,
         academicNumber: draft.academicNumber,
+        guardianPhone: draft.guardianPhone,
       );
     }
     final prepared = <Map<String, Object?>>[];
@@ -320,6 +398,7 @@ class StudentRepository {
               gradeId: draft.gradeId,
               classId: draft.classId,
               academicNumber: draft.academicNumber,
+              guardianPhone: draft.guardianPhone,
               photoPath: draft.photoPath,
               createdAt: now,
               updatedAt: now,
@@ -365,6 +444,7 @@ class StudentRepository {
     String? gradeId,
     String? classId,
     String? academicNumber,
+    String? guardianPhone,
     String? photoPath,
     String? forcedId,
   }) async {
@@ -375,6 +455,7 @@ class StudentRepository {
       nationalId: normalized,
       stage: stage,
       academicNumber: academicNumber,
+      guardianPhone: guardianPhone,
     );
     if (normalized.length != 10) {
       throw const FormatException('السجل المدني غير صالح.');
@@ -389,6 +470,7 @@ class StudentRepository {
       gradeId: gradeId,
       classId: classId,
       academicNumber: academicNumber,
+      guardianPhone: guardianPhone,
       photoPath: photoPath,
       createdAt: now,
       updatedAt: now,
@@ -424,6 +506,7 @@ class StudentRepository {
       nationalId: normalized,
       stage: student.stage,
       academicNumber: student.academicNumber,
+      guardianPhone: student.guardianPhone,
     );
     final old = await getById(student.id);
     if (old == null) throw StateError('الطالب غير موجود.');
@@ -452,6 +535,9 @@ class StudentRepository {
     final encrypted = await _protection.encrypt(normalized);
     final hash = await _protection.searchableHash(normalized);
     final barcodeToken = await _protection.stableBarcodeToken(normalized);
+    final guardianPhoneEncrypted = await _encryptGuardianPhone(
+      student.guardianPhone,
+    );
     final now = DateTime.now().toUtc().toIso8601String();
     try {
       await _database.db.transaction((txn) async {
@@ -475,6 +561,7 @@ class StudentRepository {
             'grade_id': resolvedGradeId,
             'class_id': student.classId,
             'academic_number': _emptyToNull(student.academicNumber),
+            'guardian_phone_encrypted': guardianPhoneEncrypted,
             'barcode_token': barcodeToken,
             'photo_path': _emptyToNull(student.photoPath),
             'status': student.status,
@@ -1246,6 +1333,7 @@ class StudentRepository {
     required String? gradeId,
     required String? classId,
     required String? academicNumber,
+    required String? guardianPhone,
     required String? photoPath,
     required DateTime createdAt,
     required DateTime updatedAt,
@@ -1260,6 +1348,7 @@ class StudentRepository {
       'grade_id': gradeId,
       'class_id': classId,
       'academic_number': _emptyToNull(academicNumber),
+      'guardian_phone_encrypted': await _encryptGuardianPhone(guardianPhone),
       'barcode_token': await _protection.stableBarcodeToken(nationalId),
       'photo_path': _emptyToNull(photoPath),
       'status': 'active',
@@ -1282,6 +1371,9 @@ class StudentRepository {
       classId: row['class_id'] as String?,
       className: row['class_name'] as String?,
       academicNumber: row['academic_number'] as String?,
+      guardianPhone: await _decryptGuardianPhone(
+        row['guardian_phone_encrypted'] as String?,
+      ),
       photoPath: row['photo_path'] as String?,
       status: row['status'] as String,
       transferStatus: row['transfer_status'] as String?,
@@ -1394,6 +1486,17 @@ class StudentRepository {
   static String? _emptyToNull(String? value) =>
       value == null || value.trim().isEmpty ? null : value.trim();
 
+  Future<String?> _encryptGuardianPhone(String? value) async {
+    if (value == null || value.trim().isEmpty) return null;
+    final normalized = SaudiPhoneFormatter.normalize(value);
+    return _protection.encrypt(normalized);
+  }
+
+  Future<String?> _decryptGuardianPhone(String? value) async {
+    if (value == null || value.trim().isEmpty) return null;
+    return _protection.decrypt(value);
+  }
+
   Future<void> _requireManager(String userId) async {
     final rows = await _database.db.query(
       'users',
@@ -1412,6 +1515,7 @@ class StudentRepository {
     required String nationalId,
     required String stage,
     required String? academicNumber,
+    required String? guardianPhone,
   }) {
     final normalizedName = name.trim();
     if (normalizedName.length < 2 || normalizedName.length > 150) {
@@ -1425,6 +1529,12 @@ class StudentRepository {
     }
     if ((academicNumber?.trim().length ?? 0) > 100) {
       throw const FormatException('الرقم الأكاديمي طويل جدًا.');
+    }
+    if ((guardianPhone?.trim().isNotEmpty ?? false) &&
+        !SaudiPhoneFormatter.isValidSaudiMobile(guardianPhone!)) {
+      throw const FormatException(
+        'رقم جوال ولي الأمر غير صالح. استخدم رقمًا سعوديًا يبدأ بـ 05 أو 9665.',
+      );
     }
   }
 

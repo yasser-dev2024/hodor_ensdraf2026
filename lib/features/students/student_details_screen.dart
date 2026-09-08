@@ -100,6 +100,11 @@ class _StudentDetailsScreenState extends ConsumerState<StudentDetailsScreen> {
                               icon: Icons.numbers_rounded,
                               text: student.academicNumber!,
                             ),
+                          if (student.guardianPhone?.isNotEmpty == true)
+                            _InfoChip(
+                              icon: Icons.phone_android_rounded,
+                              text: 'ولي الأمر: ${student.guardianPhone}',
+                            ),
                           if (student.stage.isNotEmpty)
                             _InfoChip(
                               icon: Icons.account_balance_outlined,
