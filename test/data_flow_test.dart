@@ -386,13 +386,15 @@ void main() {
           '966501234567 الصف الرابع 1 1012345678 محمد أحمد 1',
     );
     final contactsPreview = await importer.preview(contactsWorkbook);
-    expect(contactsWorkbook.guardianContactsOnly, isTrue);
+    expect(contactsWorkbook.guardianContactsOnly, isFalse);
     expect(contactsPreview.candidates, hasLength(1));
+    expect(contactsPreview.validCount, 1);
+    expect(contactsPreview.processableCount, 1);
     expect(
       contactsPreview.candidates.single.values[ImportField.guardianPhone],
       '966501234567',
     );
-    expect(contactsPreview.unmatchedContactCount, 1);
+    expect(contactsPreview.unmatchedContactCount, 0);
 
     expect(
       () => importer.workbookFromPdfText('scan.pdf', 'صورة بلا بيانات'),
@@ -405,6 +407,50 @@ void main() {
       ),
     );
   });
+
+  test(
+    'كشف الجوالات PDF يضيف غير الموجود ويحدث الموجود دون تغيير باركوده',
+    () async {
+      final existing = await students.create(
+        name: 'طالب موجود',
+        nationalId: '1066666666',
+        userId: managerId,
+      );
+      final originalBarcode = existing.barcodeToken;
+      final importer = StudentImportService(
+        database: database,
+        students: students,
+        classes: classes,
+      );
+      final workbook = importer.workbookFromPdfText(
+        'guardian-contacts.pdf',
+        'بيانات برنامج التحضير الصباحي للطالب\n'
+            'رقم الجوال الفصل رقم الهوية اسم الطالب م\n'
+            '966501234567 الصف الرابع 1 1066666666 طالب موجود 1\n'
+            '966551234567 الصف الرابع 1 1066666667 طالب جديد 2',
+      );
+      final preview = await importer.preview(workbook);
+
+      expect(workbook.guardianContactsOnly, isFalse);
+      expect(preview.hasGuardianPhone, isTrue);
+      expect(preview.validCount, 1);
+      expect(preview.guardianUpdateCount, 1);
+      expect(preview.processableCount, 2);
+
+      final result = await importer.import(preview, userId: managerId);
+      expect(result.imported, 1);
+      expect(result.updatedGuardianPhones, 1);
+      expect(await students.getAll(), hasLength(2));
+
+      final updated = (await students.getById(existing.id))!;
+      expect(updated.guardianPhone, '966501234567');
+      expect(updated.barcodeToken, originalBarcode);
+      final added = (await students.getAll()).singleWhere(
+        (student) => student.id != existing.id,
+      );
+      expect(added.guardianPhone, '966551234567');
+    },
+  );
 
   test('التقرير الشهري يحسب أيام الدراسة والانضباط حسب النطاق', () async {
     final gradeId = await classes.addGrade('سادس', userId: managerId);

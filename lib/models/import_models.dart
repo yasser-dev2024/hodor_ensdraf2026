@@ -76,8 +76,11 @@ class ImportPreview {
   int get validCount => candidates.where((row) => row.canImport).length;
   int get guardianUpdateCount =>
       candidates.where((row) => row.canUpdateGuardianPhone).length;
-  int get processableCount =>
-      workbook.guardianContactsOnly ? guardianUpdateCount : validCount;
+  bool get hasGuardianPhone =>
+      columnMapping.values.contains(ImportField.guardianPhone);
+  int get processableCount => workbook.guardianContactsOnly
+      ? guardianUpdateCount
+      : validCount + guardianUpdateCount;
   int get unmatchedContactCount => workbook.guardianContactsOnly
       ? candidates
             .where(
@@ -91,6 +94,7 @@ class ImportPreview {
   int get duplicateCount => candidates
       .where((row) => row.duplicateInFile || row.duplicateInDatabase)
       .length;
+  int get excludedCount => candidates.where((row) => !row.canProcess).length;
   int get errorCount => candidates.where((row) => row.errors.isNotEmpty).length;
   int get totalRows => candidates.length;
 }

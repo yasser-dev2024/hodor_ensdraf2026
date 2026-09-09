@@ -57,8 +57,8 @@ class OfficialStudentPdfParser {
   }
 
   /// Reads guardian mobile numbers from the two PDF layouts used by the
-  /// school's exports. The returned rows are intentionally contact-only and
-  /// are matched to existing students by national ID by the import service.
+  /// school's exports. The import service can add a missing student with the
+  /// phone or update the phone of an existing student using the national ID.
   static List<List<String>>? parseGuardianContactPages(
     Iterable<String> rawPages,
   ) {

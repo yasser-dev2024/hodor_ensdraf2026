@@ -203,7 +203,7 @@ void main() {
     ]);
   });
 
-  test('يقرأ كشف التحضير الصباحي PDF كتحديث جوالات فقط', () {
+  test('يقرأ كشف التحضير الصباحي PDF مع بيانات الطالب والجوال', () {
     final rows = OfficialStudentPdfParser.parseGuardianContactPages([
       '1448 هجري السنة الدراسية:\n'
           'بيانات برنامج التحضير الصباحي للطالب\n'

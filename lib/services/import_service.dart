@@ -150,11 +150,10 @@ class StudentImportService {
         sourceType: 'pdf',
         sheets: [
           ImportSheetData(
-            name: 'أرقام أولياء الأمور',
+            name: 'بيانات الطلاب والجوالات',
             rows: guardianContactRows,
           ),
         ],
-        guardianContactsOnly: true,
       );
     }
     final officialRows = OfficialStudentPdfParser.parsePages(pages);

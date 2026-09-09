@@ -50,7 +50,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'يدعم XLSX وXLS وPDF النصي. أدرج كشف الطلاب أولًا، ثم اختر ملف StudentGuidance أو كشف الجوالات PDF لتحديث أرقام أولياء الأمور دون إضافة أسماء زائدة.',
+                    'يدعم XLSX وXLS وPDF النصي. ملف StudentGuidance يحدّث جوالات الطلاب الموجودين فقط، أما كشف الجوالات PDF فيضيف الطالب مع جواله أو يحدّث جواله إذا كان موجودًا.',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.55, color: Colors.blueGrey),
                   ),
@@ -113,6 +113,19 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                       const SizedBox(height: 10),
                       const Text(
                         'تم التعرف على نموذج أرقام أولياء الأمور. سيُحدّث الطلاب الموجودين عبر السجل المدني، ولن تُضاف أسماء زائدة من هذا الملف.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          height: 1.5,
+                          color: AppColors.blue,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                    if (!_workbook!.guardianContactsOnly &&
+                        _preview?.hasGuardianPhone == true) ...[
+                      const SizedBox(height: 10),
+                      const Text(
+                        'تم التعرف على كشف طلاب وجوالات. سيُضاف الطالب غير الموجود مع جواله، وسيُحدّث جوال الطالب الموجود دون تغيير بياناته أو باركوده.',
                         style: TextStyle(
                           fontSize: 12,
                           height: 1.5,
@@ -241,7 +254,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
             if (_preview!.errorCount > 0 ||
                 (_preview!.workbook.guardianContactsOnly
                     ? _preview!.unmatchedContactCount > 0
-                    : _preview!.duplicateCount > 0)) ...[
+                    : _preview!.excludedCount > 0)) ...[
               const SizedBox(height: 14),
               Card(
                 child: ExpansionTile(
@@ -258,13 +271,13 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                   subtitle: Text(
                     _preview!.workbook.guardianContactsOnly
                         ? '${_preview!.unmatchedContactCount} سجلًا غير موجود في كشف الطلاب، ${_preview!.errorCount} به أخطاء'
-                        : '${_preview!.duplicateCount} مكرر، ${_preview!.errorCount} به أخطاء',
+                        : '${_preview!.excludedCount} صفًا غير قابل للمعالجة، ${_preview!.errorCount} به أخطاء',
                   ),
                   children: _preview!.candidates
                       .where(
                         (row) => _preview!.workbook.guardianContactsOnly
                             ? !row.canUpdateGuardianPhone
-                            : !row.canImport,
+                            : !row.canProcess,
                       )
                       .take(20)
                       .map(
@@ -297,6 +310,11 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
               label: Text(
                 _preview!.workbook.guardianContactsOnly
                     ? 'تحديث ${_preview!.guardianUpdateCount} رقم ولي أمر'
+                    : _preview!.hasGuardianPhone &&
+                          _preview!.guardianUpdateCount > 0
+                    ? _preview!.validCount > 0
+                          ? 'إضافة ${_preview!.validCount} طالب وتحديث ${_preview!.guardianUpdateCount} جوال'
+                          : 'تحديث ${_preview!.guardianUpdateCount} رقم ولي أمر'
                     : 'استيراد ${_preview!.validCount} طالبًا',
               ),
               style: FilledButton.styleFrom(
@@ -453,6 +471,29 @@ class _PreviewStats extends StatelessWidget {
                       label: 'غير مطابق',
                       value: preview.unmatchedContactCount,
                       color: AppColors.excused,
+                    ),
+                    _ImportStat(
+                      label: 'أخطاء',
+                      value: preview.errorCount,
+                      color: AppColors.absent,
+                    ),
+                  ]
+                : preview.hasGuardianPhone
+                ? [
+                    _ImportStat(
+                      label: 'الصفوف',
+                      value: preview.totalRows,
+                      color: AppColors.navy,
+                    ),
+                    _ImportStat(
+                      label: 'سيضاف',
+                      value: preview.validCount,
+                      color: AppColors.present,
+                    ),
+                    _ImportStat(
+                      label: 'سيُحدّث',
+                      value: preview.guardianUpdateCount,
+                      color: AppColors.blue,
                     ),
                     _ImportStat(
                       label: 'أخطاء',
