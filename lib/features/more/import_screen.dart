@@ -50,7 +50,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'يدعم XLSX وXLS وPDF النصي. أدرج كشف الطلاب أولًا، ثم اختر ملف StudentGuidance لتحديث أرقام أولياء الأمور دون إضافة أسماء زائدة.',
+                    'يدعم XLSX وXLS وPDF النصي. أدرج كشف الطلاب أولًا، ثم اختر ملف StudentGuidance أو كشف الجوالات PDF لتحديث أرقام أولياء الأمور دون إضافة أسماء زائدة.',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.55, color: Colors.blueGrey),
                   ),

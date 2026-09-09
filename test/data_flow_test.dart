@@ -379,6 +379,21 @@ void main() {
     expect(workbook.sourceType, 'pdf');
     expect(preview.validCount, 2);
 
+    final contactsWorkbook = importer.workbookFromPdfText(
+      'guardian-contacts.pdf',
+      'بيانات برنامج التحضير الصباحي للطالب\n'
+          'رقم الجوال الفصل رقم الهوية اسم الطالب م\n'
+          '966501234567 الصف الرابع 1 1012345678 محمد أحمد 1',
+    );
+    final contactsPreview = await importer.preview(contactsWorkbook);
+    expect(contactsWorkbook.guardianContactsOnly, isTrue);
+    expect(contactsPreview.candidates, hasLength(1));
+    expect(
+      contactsPreview.candidates.single.values[ImportField.guardianPhone],
+      '966501234567',
+    );
+    expect(contactsPreview.unmatchedContactCount, 1);
+
     expect(
       () => importer.workbookFromPdfText('scan.pdf', 'صورة بلا بيانات'),
       throwsA(

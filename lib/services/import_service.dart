@@ -142,6 +142,21 @@ class StudentImportService {
   }
 
   ImportWorkbook workbookFromPdfPages(String fileName, List<String> pages) {
+    final guardianContactRows =
+        OfficialStudentPdfParser.parseGuardianContactPages(pages);
+    if (guardianContactRows != null) {
+      return ImportWorkbook(
+        fileName: fileName,
+        sourceType: 'pdf',
+        sheets: [
+          ImportSheetData(
+            name: 'أرقام أولياء الأمور',
+            rows: guardianContactRows,
+          ),
+        ],
+        guardianContactsOnly: true,
+      );
+    }
     final officialRows = OfficialStudentPdfParser.parsePages(pages);
     if (officialRows != null) {
       return ImportWorkbook(

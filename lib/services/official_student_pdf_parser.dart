@@ -8,6 +8,15 @@ class OfficialStudentPdfParser {
     'الفصل',
   ];
 
+  static const guardianContactHeaders = <String>[
+    'اسم الطالب',
+    'السجل المدني',
+    'الصف',
+    'الفصل',
+    'المرحلة',
+    'جوال ولي الأمر',
+  ];
+
   static const _gradePattern = r'(?:الأول|الثاني|الثالث|الرابع|الخامس|السادس)';
 
   static final RegExp _registryRecordEnd = RegExp(r'الدراسة(?=\n|$)');
@@ -43,6 +52,251 @@ class OfficialStudentPdfParser {
     final registryRows = _parseOfficialRegistryPages(pages);
     if (registryRows.isNotEmpty) {
       return <List<String>>[headers, ...registryRows];
+    }
+    return null;
+  }
+
+  /// Reads guardian mobile numbers from the two PDF layouts used by the
+  /// school's exports. The returned rows are intentionally contact-only and
+  /// are matched to existing students by national ID by the import service.
+  static List<List<String>>? parseGuardianContactPages(
+    Iterable<String> rawPages,
+  ) {
+    final pages = rawPages
+        .map(normalizeExtractedText)
+        .where((page) => page.trim().isNotEmpty)
+        .toList();
+    if (pages.isEmpty) return null;
+
+    final rows = <List<String>>[];
+    final seenNationalIds = <String>{};
+    _parseMorningAttendanceGuardianContacts(pages, rows, seenNationalIds);
+    _parseOfficialRosterGuardianContacts(pages, rows, seenNationalIds);
+    if (rows.isEmpty) return null;
+    return <List<String>>[guardianContactHeaders, ...rows];
+  }
+
+  static void _parseMorningAttendanceGuardianContacts(
+    List<String> pages,
+    List<List<String>> rows,
+    Set<String> seenNationalIds,
+  ) {
+    final spacedRecord = RegExp(
+      '^((?:9665[0-9]{8}|05[0-9]{8}))\\s+'
+      'الصف\\s+($_gradePattern)(?:\\s+الابتدائي)?\\s+'
+      '([0-9]{1,2})\\s+([0-9]{10})\\s+'
+      '([\\u0621-\\u064a][\\u0621-\\u064a\\s.\\-]+?)\\s+'
+      '[0-9]{1,3}\$',
+      multiLine: true,
+    );
+    for (final page in pages) {
+      if (!page.contains('برنامج التحضير الصباحي') ||
+          !page.contains('رقم الجوال') ||
+          !page.contains('رقم الهوية')) {
+        continue;
+      }
+      for (final match in spacedRecord.allMatches(page)) {
+        final nationalId = match.group(4)!;
+        if (!seenNationalIds.add(nationalId)) continue;
+        rows.add(<String>[
+          match.group(5)!.replaceAll(RegExp(r'\s+'), ' ').trim(),
+          nationalId,
+          _normalizeGrade(match.group(2)!),
+          match.group(3)!,
+          'المرحلة الابتدائية',
+          match.group(1)!,
+        ]);
+      }
+      for (final line in page.split('\n')) {
+        final parsed = _parseCompactMorningAttendanceContact(line);
+        if (parsed == null || !seenNationalIds.add(parsed[1])) continue;
+        rows.add(parsed);
+      }
+    }
+  }
+
+  static List<String>? _parseCompactMorningAttendanceContact(String line) {
+    final match = RegExp(
+      '^(.*?)((?:9665[0-9]{8}|05[0-9]{8}|5[0-9]{8}))'
+      'الصف\\s+($_gradePattern)(?:\\s+الابتدائي)?\\s+'
+      '([0-9]{10})([0-9]{1,2})(.*)\$',
+    ).firstMatch(line.trim());
+    if (match == null) return null;
+
+    final beforePhone = match
+        .group(1)!
+        .replaceFirst(RegExp(r'[0-9]{1,3}\s*$'), '')
+        .trim();
+    final afterIdentity = match
+        .group(6)!
+        .replaceFirst(RegExp(r'[0-9]{1,3}\s*$'), '')
+        .replaceFirst(RegExp(r'^[^ء-ي]+'), '')
+        .trim();
+    final name = '$afterIdentity$beforePhone'
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (name.length < 2) return null;
+
+    var phone = match.group(2)!;
+    if (phone.length == 9) phone = '966$phone';
+    return <String>[
+      name,
+      match.group(4)!,
+      _normalizeGrade(match.group(3)!),
+      match.group(5)!,
+      'المرحلة الابتدائية',
+      phone,
+    ];
+  }
+
+  static void _parseOfficialRosterGuardianContacts(
+    List<String> pages,
+    List<List<String>> rows,
+    Set<String> seenNationalIds,
+  ) {
+    final isGuardianRoster = pages.any(
+      (page) => page.contains('رقم جوال') && page.contains('كشف الطلاب'),
+    );
+    if (!isGuardianRoster) return;
+
+    final rosterRows = _parseOfficialRosterPages(pages);
+    final guardianPhones = _extractOfficialGuardianPhones(pages);
+    if (rosterRows.isNotEmpty && rosterRows.length == guardianPhones.length) {
+      for (var index = 0; index < rosterRows.length; index++) {
+        final rosterRow = rosterRows[index];
+        final nationalId = rosterRow[1];
+        if (!seenNationalIds.add(nationalId)) continue;
+        rows.add(<String>[
+          rosterRow[0],
+          nationalId,
+          rosterRow[2],
+          rosterRow[3],
+          rosterRow[2].isEmpty ? '' : 'المرحلة الابتدائية',
+          guardianPhones[index],
+        ]);
+      }
+      return;
+    }
+
+    String? currentGrade;
+    String? currentClass;
+    for (final page in pages) {
+      final lines = page
+          .split('\n')
+          .map((line) => line.trim())
+          .where((line) => line.isNotEmpty)
+          .toList();
+      if (lines.isEmpty) continue;
+
+      final pageGrade =
+          _valueFollowingLabel(
+            lines,
+            'الصف',
+            RegExp('^$_gradePattern(?:\\s+الابتدائي)?\$'),
+          ) ??
+          _gradeBesideLabel(lines.join('\n'));
+      final pageClass =
+          _valueFollowingLabel(lines, 'الفصل', RegExp(r'^[0-9]{1,2}$')) ??
+          _classBesideLabel(lines.join('\n'));
+      if (pageGrade != null) currentGrade = _normalizeGrade(pageGrade);
+      if (pageClass != null) currentClass = pageClass;
+
+      var recordStart = 0;
+      for (var index = 0; index < lines.length; index++) {
+        final statusEnd = _rosterStatusEnd(lines, index);
+        if (statusEnd == null) continue;
+
+        var serialIndex = statusEnd;
+        final nameLines = <String>[];
+        while (serialIndex < lines.length) {
+          final line = lines[serialIndex];
+          final serialMatch = RegExp(
+            r'^(.*?)(?:\s+)?([0-9]{1,3})$',
+          ).firstMatch(line);
+          if (serialMatch != null) {
+            final namePart = serialMatch.group(1)!.trim();
+            if (RegExp(r'[ء-ي]').hasMatch(namePart)) nameLines.add(namePart);
+            break;
+          }
+          if (RegExp(r'[ء-ي]').hasMatch(line)) nameLines.add(line);
+          serialIndex++;
+        }
+        if (serialIndex >= lines.length) break;
+
+        final nationalId = _nationalIdBeforeStatus(lines, index, recordStart);
+        final guardianPhone = _guardianPhoneBeforeStatus(
+          lines,
+          index,
+          recordStart,
+        );
+        final name = nameLines.join(' ').replaceAll(RegExp(r'\s+'), ' ').trim();
+        if (nationalId != null &&
+            guardianPhone != null &&
+            name.length >= 2 &&
+            seenNationalIds.add(nationalId)) {
+          rows.add(<String>[
+            name,
+            nationalId,
+            currentGrade ?? '',
+            currentClass ?? '',
+            currentGrade == null ? '' : 'المرحلة الابتدائية',
+            guardianPhone,
+          ]);
+        }
+        recordStart = serialIndex + 1;
+        index = serialIndex;
+      }
+    }
+  }
+
+  static List<String> _extractOfficialGuardianPhones(List<String> pages) {
+    final phones = <String>[];
+    String? pendingPrefix;
+    for (final page in pages) {
+      for (final line in page.split('\n').map((line) => line.trim())) {
+        final complete = RegExp(r'^(9665[0-9]{8})(?=\s|$)').firstMatch(line);
+        if (complete != null) {
+          phones.add(complete.group(1)!);
+          pendingPrefix = null;
+          continue;
+        }
+        final prefix = RegExp(r'^(9665[0-9]{5})(?=\s|$)').firstMatch(line);
+        if (prefix != null) {
+          pendingPrefix = prefix.group(1)!;
+          continue;
+        }
+        if (pendingPrefix == null) continue;
+        final suffix = RegExp(r'^([0-9]{3})(?=\s|$)').firstMatch(line);
+        if (suffix == null) continue;
+        phones.add('$pendingPrefix${suffix.group(1)}');
+        pendingPrefix = null;
+      }
+    }
+    return phones;
+  }
+
+  static String? _guardianPhoneBeforeStatus(
+    List<String> lines,
+    int statusIndex,
+    int recordStart,
+  ) {
+    String? prefix;
+    for (var index = recordStart; index <= statusIndex; index++) {
+      final line = lines[index];
+      final complete = RegExp(
+        r'(?:^|\s)((?:9665[0-9]{8}|05[0-9]{8}))(?=\s|$)',
+      ).firstMatch(line);
+      if (complete != null) return complete.group(1);
+
+      prefix ??= RegExp(
+        r'(?:^|\s)(9665[0-9]{5})(?=\s|$)',
+      ).firstMatch(line)?.group(1);
+      if (prefix == null) continue;
+
+      final suffix = RegExp(r'^([0-9]{3})(?=\s|$)').firstMatch(line);
+      if (suffix != null && line.substring(suffix.end).trim().isNotEmpty) {
+        return '$prefix${suffix.group(1)}';
+      }
     }
     return null;
   }

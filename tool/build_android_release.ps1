@@ -31,10 +31,9 @@ New-Item -ItemType Directory -Path $temporaryRoot -Force | Out-Null
 # older versions of this script before synchronizing the source tree.
 $temporaryPrefix = $resolvedTemporaryRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 $studentFilePatterns = @(
-    "EL_StudentInfoReport*.pdf",
-    "EL_StudentInfoReport*.xls",
-    "EL_StudentInfoReport*.xlsx",
-    "StudentGuidance*.xls",
+    "*.pdf",
+    "*.xls",
+    "*.xlsx",
     "eb9a1590-a84e-49a4-864d-32c9e8a15680.png"
 )
 foreach ($pattern in $studentFilePatterns) {
@@ -52,9 +51,8 @@ foreach ($pattern in $studentFilePatterns) {
 & robocopy.exe $sourceRoot $temporaryRoot /MIR /R:2 /W:1 `
     /XD .git build .dart_tool .gradle releases issued_activation_keys `
     /XF .activation_private_key key.properties release-key.jks windows-cacerts `
-        "EL_StudentInfoReport*.pdf" "EL_StudentInfoReport*.xls" `
-        "EL_StudentInfoReport*.xlsx" `
-        "StudentGuidance*.xls" "eb9a1590-a84e-49a4-864d-32c9e8a15680.png" `
+        "*.pdf" "*.xls" "*.xlsx" `
+        "eb9a1590-a84e-49a4-864d-32c9e8a15680.png" `
     /NFL /NDL /NJH /NJS /NP | Out-Null
 $copyExitCode = $LASTEXITCODE
 if ($copyExitCode -gt 7) {
