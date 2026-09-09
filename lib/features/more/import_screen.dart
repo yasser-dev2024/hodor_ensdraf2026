@@ -50,7 +50,7 @@ class _ImportScreenState extends ConsumerState<ImportScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'يدعم XLSX وXLS وPDF النصي. ملف StudentGuidance يحدّث جوالات الطلاب الموجودين فقط، أما كشف الجوالات PDF فيضيف الطالب مع جواله أو يحدّث جواله إذا كان موجودًا.',
+                    'يدعم XLSX وXLS وPDF النصي. كشوف الطلاب والجوالات، ومنها StudentGuidance، تضيف الطالب مع جواله إذا لم يكن موجودًا وتحدّث جواله إذا كان موجودًا.',
                     textAlign: TextAlign.center,
                     style: TextStyle(height: 1.55, color: Colors.blueGrey),
                   ),

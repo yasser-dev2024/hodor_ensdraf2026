@@ -756,7 +756,7 @@ void main() {
   });
 
   test(
-    'يحدّث جوال ولي الأمر للطالب الموجود دون تغيير الباركود أو إضافة اسم زائد',
+    'StudentGuidance يضيف غير الموجود ويحدث الموجود دون تغيير الباركود',
     () async {
       final student = await students.create(
         name: 'طالب موجود',
@@ -767,7 +767,6 @@ void main() {
       final workbook = ImportWorkbook(
         fileName: 'StudentGuidance.xls',
         sourceType: 'xls',
-        guardianContactsOnly: true,
         sheets: const [
           ImportSheetData(
             name: 'أرقام أولياء الأمور',
@@ -807,8 +806,9 @@ void main() {
         classes: classes,
       ).preview(workbook);
       expect(preview.guardianUpdateCount, 1);
-      expect(preview.unmatchedContactCount, 1);
-      expect(preview.processableCount, 1);
+      expect(preview.validCount, 1);
+      expect(preview.unmatchedContactCount, 0);
+      expect(preview.processableCount, 2);
 
       final result = await StudentImportService(
         database: database,
@@ -816,16 +816,21 @@ void main() {
         classes: classes,
       ).import(preview, userId: managerId);
 
-      expect(result.imported, 0);
+      expect(result.imported, 1);
       expect(result.updatedGuardianPhones, 1);
-      expect(result.unmatchedContacts, 1);
-      expect(await students.getAll(), hasLength(1));
+      expect(result.unmatchedContacts, 0);
+      expect(await students.getAll(), hasLength(2));
       final updated = (await students.getById(student.id))!;
       expect(updated.guardianPhone, '966501234567');
       expect(updated.barcodeToken, originalBarcode);
       expect(await students.guardianPhonesForStudentIds([student.id]), {
         student.id: '966501234567',
       });
+      final added = (await students.getAll()).singleWhere(
+        (item) => item.id != student.id,
+      );
+      expect(added.name, 'اسم زائد غير موجود');
+      expect(added.guardianPhone, '966551234567');
       final raw =
           (await database.db.query(
                 'students',

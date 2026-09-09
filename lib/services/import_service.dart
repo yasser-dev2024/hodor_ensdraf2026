@@ -225,9 +225,8 @@ class StudentImportService {
         fileName: fileName,
         sourceType: 'xlsx',
         sheets: [
-          ImportSheetData(name: 'أرقام أولياء الأمور', rows: guidanceRows),
+          ImportSheetData(name: 'بيانات الطلاب والجوالات', rows: guidanceRows),
         ],
-        guardianContactsOnly: true,
       );
     }
     final officialRows = OfficialStudentPdfParser.parseWorkbookSheets(
@@ -268,9 +267,8 @@ class StudentImportService {
         fileName: fileName,
         sourceType: 'xls',
         sheets: [
-          ImportSheetData(name: 'أرقام أولياء الأمور', rows: guidanceRows),
+          ImportSheetData(name: 'بيانات الطلاب والجوالات', rows: guidanceRows),
         ],
-        guardianContactsOnly: true,
       );
     }
     final officialRows = OfficialStudentPdfParser.parseWorkbookSheets(

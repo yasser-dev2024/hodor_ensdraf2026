@@ -182,7 +182,7 @@ void main() {
     expect(rows[2][3], '2');
   });
 
-  test('يحوّل نموذج الإرشاد إلى تحديث جوالات دون خلط رقم الطالب', () {
+  test('يحوّل نموذج الإرشاد إلى بيانات طلاب وجوالات دون خلط رقم الطالب', () {
     final rows = StudentGuidanceWorkbookParser.parseSheets([
       [
         ['', 'Student Info Table'],
